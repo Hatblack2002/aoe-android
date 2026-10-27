@@ -8,7 +8,8 @@
 
 #include <SDL.h>
 #ifdef __ANDROID__
-#include <SDL_system.h>
+#include <jni.h>          // tipos JNI (JNIEnv, jobject...); SDL no lo incluye
+#include <SDL_system.h>   // SDL_AndroidGetJNIEnv/GetActivity devuelven void*
 #endif
 #include <cstdio>
 #include <cstdlib>
@@ -89,9 +90,9 @@ std::string versionSdl() {
 // Sin FileProvider ni permisos: suficiente para enviar el registro (M0) y mas
 // adelante cualquier evidencia de texto que las herramientas produzcan.
 bool compartirTexto(const std::string& texto) {
-    JNIEnv* env = SDL_AndroidGetJNIEnv();
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
     if (!env) return false;
-    jobject actividad = SDL_AndroidGetActivity();
+    jobject actividad = static_cast<jobject>(SDL_AndroidGetActivity());
     if (!actividad) return false;
 
     bool ok = false;
