@@ -26,7 +26,7 @@ Run de CI que acredita esta tabla: https://github.com/Hatblack2002/aoe-android/a
 | Muestra la version del programa | OK | visible en la captura: "AoE Mobile 0.1.0 (M0)" |
 | Muestra las ultimas lineas del registro | OK | visibles en la captura (9 lineas del anillo) |
 | El registro se guarda en archivo compartible | OK | `game.log` publicado como artefacto en CI; en el telefono: `Android/data/com.aoemobile.engine/files/game.log` + boton COMPARTIR LOG |
-| Captura de pantalla del telefono por el usuario | PENDIENTE | se pide al usuario tras instalar el APK (ver README)
+| Captura de pantalla del telefono por el usuario | PENDIENTE | se pide al usuario tras instalar el APK (ver README) |
 
 ### Evidencia del agente (sin telefono)
 
