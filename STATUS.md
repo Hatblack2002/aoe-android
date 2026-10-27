@@ -16,20 +16,28 @@ Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especifi
 
 ## M0 - criterios de aceptacion
 
+Run de CI que acredita esta tabla: https://github.com/Hatblack2002/aoe-android/actions/runs/40600155908
+
 | Criterio (spec §6 M0) | Estado | Evidencia |
 | --- | --- | --- |
 | CMake + SDL2 + NDK | OK | `CMakeLists.txt` raiz compartido por escritorio y Android; Gradle invoca el mismo CMake con el toolchain del NDK |
-| GitHub Actions genera el APK | OK | workflow `build.yml`, trabajo `android-apk` -> artefacto `aoe-mobile-M0-debug-apk` |
-| La app abre y muestra un color | OK (codigo) | composicion por software en `src/render/framebuffer.cpp` (`clear` + franja superior) |
-| Muestra la version del programa | OK (codigo) | primera linea en pantalla: `AOE_VERSION_STRING` (`src/version.h`) |
-| Muestra las ultimas lineas del registro | OK (codigo) | anillo de 64 lineas en `src/platform/log.cpp`; se dibujan 9 en pantalla |
-| El registro se guarda en archivo compartible | OK (codigo) | `game.log` en el almacenamiento externo de la app (`Android/data/com.aoemobile.engine/files/`) + boton COMPARTIR LOG (ACTION_SEND con texto, sin permisos) |
-| Captura de pantalla del telefono por el usuario | PENDIENTE | se pide al usuario tras instalar el APK |
+| GitHub Actions genera el APK | OK | artefacto `aoe-mobile-M0-debug-apk` (742 KB) en el run 40600155908 |
+| La app abre y muestra un color | OK | captura `selftest.bmp` del trabajo `desktop-selftest` (mismo codigo nativo) + pendiente captura del telefono |
+| Muestra la version del programa | OK | visible en la captura: "AoE Mobile 0.1.0 (M0)" |
+| Muestra las ultimas lineas del registro | OK | visibles en la captura (9 lineas del anillo) |
+| El registro se guarda en archivo compartible | OK | `game.log` publicado como artefacto en CI; en el telefono: `Android/data/com.aoemobile.engine/files/game.log` + boton COMPARTIR LOG |
+| Captura de pantalla del telefono por el usuario | PENDIENTE | se pide al usuario tras instalar el APK (ver README)
 
 ### Evidencia del agente (sin telefono)
 
-- Autoprueba de escritorio: mismo codigo C++ compilado en Linux, ejecutado con el driver de video `dummy` durante 120 cuadros, guarda `selftest.bmp` y `game.log`, salida 0. Se ejecuta en CI (trabajo `desktop-selftest`) y localmente antes de cada push.
-- CI en verde: enlaces al run en los comentarios del commit correspondiente.
+- Autoprueba de escritorio local (g++ 14 / SDL2 2.32.10 / driver dummy): 120 cuadros, captura y registro, salida 0, sin FATAL.
+- CI verde en el run 40600155908: `desktop-selftest` OK (compila, corre y publica evidencia) y `android-apk` OK (APK arm64-v8a como artefacto).
+
+### Correcciones durante la puesta en verde (registro honesto)
+
+1. `compartirTexto()` se llamaba fuera del guard `__ANDROID__` -> error detectado en compilacion local.
+2. SDL trae su propio `gradle-wrapper.jar` en su plantilla; la validacion de wrappers de setup-gradle lo rechazaba -> se elimina en `fetch_sdl.sh` (no se usa).
+3. SDL2 declara `SDL_AndroidGetJNIEnv/GetActivity` como `void*` y no incluye `<jni.h>` -> include + conversion explicita.
 
 ## Decisiones tecnicas registradas
 
