@@ -1,0 +1,10 @@
+third_party/
+build/
+build-*/
+android-project/.gradle/
+android-project/app/build/
+android-project/local.properties
+android-project/app/src/main/java/org/libsdl/app/
+*.apk
+selftest.bmp
+game.log

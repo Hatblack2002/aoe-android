@@ -1,0 +1,72 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  desktop-selftest:
+    name: Autoprueba de escritorio (sin ventana)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descargar SDL2 (version y SHA-256 fijados)
+        run: ./scripts/fetch_sdl.sh
+
+      - name: Compilar (CMake)
+        run: |
+          cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DSDL_AUDIO=OFF -DSDL_JOYSTICK=OFF -DSDL_HAPTIC=OFF -DSDL_POWER=OFF \
+            -DSDL_SENSOR=OFF -DSDL_TIMERS=ON -DSDL_TESTS=OFF \
+            -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_OPENGL=OFF -DSDL_VULKAN=OFF
+          cmake --build build-desktop --parallel
+
+      - name: Ejecutar autoprueba (driver dummy)
+        run: |
+          SDL_VIDEODRIVER=dummy ./build-desktop/aoe --selftest --frames 120 \
+            --screenshot build-desktop/selftest.bmp --logdir build-desktop
+          test -s build-desktop/selftest.bmp
+          test -s build-desktop/game.log
+          ! grep -q FATAL build-desktop/game.log
+
+      - name: Subir evidencia
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-evidencia
+          path: |
+            build-desktop/selftest.bmp
+            build-desktop/game.log
+          if-no-files-found: error
+
+  android-apk:
+    name: APK Android (arm64-v8a)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descargar SDL2 (version y SHA-256 fijados)
+        run: ./scripts/fetch_sdl.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Compilar APK de depuracion
+        run: gradle -p android-project assembleDebug --no-daemon --stacktrace
+
+      - name: Preparar artefacto
+        run: cp android-project/app/build/outputs/apk/debug/app-debug.apk aoe-mobile-M0-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aoe-mobile-M0-debug-apk
+          path: aoe-mobile-M0-debug.apk
+          if-no-files-found: error

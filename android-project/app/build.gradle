@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.aoemobile.engine'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.aoemobile.engine"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0-m0"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_static", "-DCMAKE_BUILD_TYPE=Release"
+                // Spec §3: arquitectura objetivo arm64-v8a.
+                abiFilters "arm64-v8a"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            // El CMake raíz (mismo código que la autoprueba de escritorio).
+            path file('../../CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
