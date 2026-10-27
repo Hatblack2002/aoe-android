@@ -26,6 +26,13 @@ fi
 # Enlace estable para CMake: third_party/SDL
 ln -sfn "SDL2-${SDL_VERSION}" "$THIRD/SDL"
 
+# SDL trae su propia plantilla android-project con un gradle-wrapper.jar que
+# NUNCA usamos (el CI instala Gradle via setup-gradle). Se retira para que la
+# validacion de wrappers del CI no lo escanee y no ensucie el workspace.
+rm -rf "SDL2-${SDL_VERSION}/android-project/gradle" \
+       "SDL2-${SDL_VERSION}/android-project/gradlew" \
+       "SDL2-${SDL_VERSION}/android-project/gradlew.bat"
+
 # Archivos Java que SDLActivity necesita dentro del proyecto Android
 JAVA_SRC="$THIRD/SDL2-${SDL_VERSION}/android-project/app/src/main/java/org/libsdl/app"
 JAVA_DST="$ROOT/android-project/app/src/main/java/org/libsdl/app"
