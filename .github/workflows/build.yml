@@ -15,7 +15,7 @@ jobs:
       - name: Descargar SDL2 (version y SHA-256 fijados)
         run: ./scripts/fetch_sdl.sh
 
-      - name: Compilar (CMake: motor + assetcheck + dumpslp + gendata)
+      - name: "Compilar CMake (motor + assetcheck + dumpslp + gendata)"
         run: |
           cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -24,7 +24,7 @@ jobs:
             -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_OPENGL=OFF -DSDL_VULKAN=OFF
           cmake --build build-desktop --parallel
 
-      - name: Autoprueba del motor (driver dummy)
+      - name: "Autoprueba del motor (driver dummy)"
         run: |
           SDL_VIDEODRIVER=dummy ./build-desktop/aoe --selftest --frames 120 \
             --screenshot build-desktop/selftest.bmp --logdir build-desktop
@@ -35,7 +35,7 @@ jobs:
       - name: Pruebas M1 (datos sinteticos, lectores DRS/SLP/paleta/dat, corruptos)
         run: ./scripts/m1_tests.sh build-desktop
 
-      - name: Demo M1 en pantalla (generar + assetcheck + dumpslp) con captura
+      - name: "Demo M1 en pantalla con captura"
         run: |
           rm -rf /home/runner/.local/share/aoe-mobile/m1
           SDL_VIDEODRIVER=dummy ./build-desktop/aoe --selftest --m1-demo --frames 120 \
