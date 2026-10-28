@@ -6,7 +6,7 @@ Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especifi
 | --- | --- |
 | M0 Esqueleto | COMPLETO (CI verde + APK instalado + registro y verificacion del usuario) |
 | M1 Lectura de datos | CI verde con datos sinteticos (run 40640469585); evidencia del telefono con archivos reales pendiente (no bloquea: el usuario pidio seguir) |
-| M2 Mapa visible | CI verde con datos sinteticos (mapa 64x64, tile del dat, camara, anti-pantalla-negra); captura del telefono pendiente |
+| M2 Mapa visible | CI verde con datos sinteticos (run 40778921591: mapa 64x64, tile del dat, camara, anti-pantalla-negra + APK 993 KB); captura del telefono pendiente (no bloquea) |
 | M3 Objetos y centro urbano | no iniciado |
 | M4 Unidades que se mueven | no iniciado |
 | M5 Economia y construccion (fin Nivel 2) | no iniciado |
@@ -85,6 +85,7 @@ Advertencia honesta: el layout del dat esta verificado para Rise of Rome. Para e
 
 ## M2 - mapa visible (criterios de aceptacion)
 
+Run de CI: https://github.com/Hatblack2002/aoe-android/actions/runs/40778921591 (pruebas M1+M2 + APK 0.3.0-m2 de 993 KB + evidencia PNG).
 | Criterio (spec §6 M2) | Estado | Evidencia |
 | --- | --- | --- |
 | Mapa de prueba generado por codigo (64x64) con varios terrenos | OK | `src/game/mapa.cpp`: lago con orilla, rio sinuoso, parches de tierra; formulas puras sin azar; `m2_tests` paso 3 verifica 64x64 y los 4 terrenos |
@@ -102,6 +103,12 @@ Advertencia honesta: el layout del dat esta verificado para Rise of Rome. Para e
 - Prueba negativa propia: `AOE_M2_TEST_NEGRO=1` suprime el dibujo y el binario DEBE salir con error y causa (guarda anti-negro verificada en CI, paso 6).
 - `--dat RUTA` en la demo exige un dat legible; truncado o corrupto -> exit 1 con causa (paso 7).
 - Exportacion PNG propia (escritor del M1) reutilizada para la evidencia; sin dependencias nuevas.
+
+### Correcciones durante M2 (registro honesto)
+
+1. `leerDat` se llamo sin el namespace `assets::` en la integracion del modo mapa (detectado en compilacion local).
+2. Con `--dat` forzado que falla, el codigo hacia fallback silencioso al dat del pref-path; corregido: tile INVALIDO + FATAL (detectado por la propia prueba 7).
+3. CI: el runner de GitHub intento auto-instalar el NDK 27.0.12077973 y la descarga fallo (infra, no codigo); fijado `ndkVersion 27.2.12479018` + paso que garantiza el NDK con sdkmanager antes de Gradle.
 
 ## Decisiones tecnicas registradas
 
