@@ -46,6 +46,28 @@ void Framebuffer::fillRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uin
     }
 }
 
+// Vuelca un bufer RGBA8888 (sprites decodificados) con recorte de bordes.
+void Framebuffer::blitRgba(int x, int y, int ancho, int alto, const uint8_t* rgba, int escala) {
+    if (escala < 1) escala = 1;
+    if (ancho <= 0 || alto <= 0 || !rgba) return;
+    for (int sy = 0; sy < alto * escala; ++sy) {
+        const int py = y + sy;
+        if (py < 0 || py >= h_) continue;
+        const int syFuente = sy / escala;
+        uint32_t* fila = pixels_.data() + static_cast<std::size_t>(py) * w_;
+        for (int sx = 0; sx < ancho * escala; ++sx) {
+            const int px = x + sx;
+            if (px < 0 || px >= w_) continue;
+            const uint8_t* p = rgba + (static_cast<std::size_t>(syFuente) * ancho +
+                                       sx / escala) * 4;
+            if (p[3] == 0) continue;  // transparente
+            const uint32_t color = 0xFF000000u | (static_cast<uint32_t>(p[0]) << 16) |
+                                   (static_cast<uint32_t>(p[1]) << 8) | static_cast<uint32_t>(p[2]);
+            fila[px] = color;
+        }
+    }
+}
+
 // Fuente embebida font8x8 (dominio público, Daniel Hepper). Solo ASCII 32..127;
 // cualquier otro carácter se dibuja como '?'. Cada glifo: 8 filas de 8 bits,
 // bit gx = columna izquierda-derecha.

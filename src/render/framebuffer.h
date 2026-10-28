@@ -21,6 +21,10 @@ public:
     void drawText(int x, int y, const std::string& texto,
                   uint8_t r, uint8_t g, uint8_t b, int escala = 1);
 
+    // Vuelta un bufer RGBA8888 (orden por filas) con escala entera; los
+    // pixeles con alfa 0 se dejan transparentes. Recorta lo que salga.
+    void blitRgba(int x, int y, int ancho, int alto, const uint8_t* rgba, int escala = 1);
+
     bool present();  // sube la textura, RenderCopy y Present; false si algo falló
     bool saveBmp(const std::string& ruta);
 

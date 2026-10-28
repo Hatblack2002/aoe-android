@@ -8,9 +8,10 @@
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
-        <!-- SDLActivity (org.libsdl.app) la aporta SDL2 via scripts/fetch_sdl.sh -->
+        <!-- MainActivity (com.aoemobile.engine) extiende SDLActivity: anade
+             el importador de archivos SAF para los datos reales del usuario. -->
         <activity
-            android:name="org.libsdl.app.SDLActivity"
+            android:name="com.aoemobile.engine.MainActivity"
             android:label="@string/app_name"
             android:exported="true"
             android:screenOrientation="sensorLandscape"
