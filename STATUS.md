@@ -4,7 +4,7 @@ Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especifi
 
 | Hito | Estado |
 | --- | --- |
-| M0 Esqueleto | Codigo y CI listos; falta evidencia del telefono |
+| M0 Esqueleto | CI verde + registro del dispositivo recibido; falta solo la captura de pantalla |
 | M1 Lectura de datos | no iniciado |
 | M2 Mapa visible | no iniciado |
 | M3 Objetos y centro urbano | no iniciado |
@@ -25,7 +25,7 @@ Run de CI que acredita esta tabla: https://github.com/Hatblack2002/aoe-android/a
 | La app abre y muestra un color | OK | captura `selftest.bmp` del trabajo `desktop-selftest` (mismo codigo nativo) + pendiente captura del telefono |
 | Muestra la version del programa | OK | visible en la captura: "AoE Mobile 0.1.0 (M0)" |
 | Muestra las ultimas lineas del registro | OK | visibles en la captura (9 lineas del anillo) |
-| El registro se guarda en archivo compartible | OK | `game.log` publicado como artefacto en CI; en el telefono: `Android/data/com.aoemobile.engine/files/game.log` + boton COMPARTIR LOG |
+| El registro se guarda en archivo compartible | RECIBIDO del dispositivo | log del telefono: `game.log (ok)` en `/storage/emulated/0/Android/data/com.aoemobile.engine/files/` + COMPARTIR LOG funcionando (`intent lanzado`); en CI, `game.log` publicado como artefacto |
 | Captura de pantalla del telefono por el usuario | PENDIENTE | se pide al usuario tras instalar el APK (ver README) |
 
 ### Evidencia del agente (sin telefono)
@@ -38,6 +38,22 @@ Run de CI que acredita esta tabla: https://github.com/Hatblack2002/aoe-android/a
 1. `compartirTexto()` se llamaba fuera del guard `__ANDROID__` -> error detectado en compilacion local.
 2. SDL trae su propio `gradle-wrapper.jar` en su plantilla; la validacion de wrappers de setup-gradle lo rechazaba -> se elimina en `fetch_sdl.sh` (no se usa).
 3. SDL2 declara `SDL_AndroidGetJNIEnv/GetActivity` como `void*` y no incluye `<jni.h>` -> include + conversion explicita.
+
+### Evidencia del usuario (telefono, recibida el 28 oct 2026)
+
+Texto compartido con el boton COMPARTIR LOG, tal como llego:
+
+```
+AoE Mobile 0.1.0 (M0) | SDL 2.32.10
+LOG:
+[00:00.004] == AoE Mobile 0.1.0 (M0) ==
+[00:00.006] SDL 2.32.10 | plataforma: android
+[00:00.006] archivo de registro: /storage/emulated/0/Android/data/com.aoemobile.engine/files/game.log (ok)
+[00:00.077] marco de dibujo 960x540 listo (composicion por software)
+[00:04.406] COMPARTIR LOG: intent lanzado
+```
+
+Lo que acredita: la app corre en un telefono Android real, SDL 2.32.10 carga, el archivo de registro se escribe en el almacenamiento externo de la app y el boton de compartir funciona. Verificacion humana del render (captura de pantalla): pendiente.
 
 ## Decisiones tecnicas registradas
 
