@@ -6,6 +6,10 @@ android {
     namespace 'com.aoemobile.engine'
     compileSdk 34
 
+    // NDK preinstalado en los runners de GitHub (evita la auto-instalacion
+    // flaky del SDK manager durante el configure de AGP).
+    ndkVersion '27.2.12479018'
+
     defaultConfig {
         applicationId "com.aoemobile.engine"
         minSdk 21
