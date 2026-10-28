@@ -32,9 +32,11 @@ target_include_directories(aoe_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 set(AOE_SOURCES
   src/main.cpp
+  src/game/mapa.cpp
   src/platform/log.cpp
   src/platform/metrics.cpp
   src/render/framebuffer.cpp
+  src/render/isometrico.cpp
 )
 
 # SDL expone distintos nombres de target segun version/plataforma.

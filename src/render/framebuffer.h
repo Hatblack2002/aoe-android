@@ -28,6 +28,10 @@ public:
     bool present();  // sube la textura, RenderCopy y Present; false si algo falló
     bool saveBmp(const std::string& ruta);
 
+    // Acceso de solo lectura al búfer (0xAARRGGBB por píxel, por filas) para
+    // exportar evidencia PNG sin duplicar memoria en la capa render.
+    const uint32_t* pixels() const { return pixels_.data(); }
+
     int width() const { return w_; }
     int height() const { return h_; }
 

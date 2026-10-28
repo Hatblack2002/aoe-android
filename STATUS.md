@@ -5,8 +5,8 @@ Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especifi
 | Hito | Estado |
 | --- | --- |
 | M0 Esqueleto | COMPLETO (CI verde + APK instalado + registro y verificacion del usuario) |
-| M1 Lectura de datos | CI verde con datos sinteticos (run 40640469585); pendiente ejecutar assetcheck/dumpslp en el telefono con archivos reales |
-| M2 Mapa visible | no iniciado |
+| M1 Lectura de datos | CI verde con datos sinteticos (run 40640469585); evidencia del telefono con archivos reales pendiente (no bloquea: el usuario pidio seguir) |
+| M2 Mapa visible | CI verde con datos sinteticos (mapa 64x64, tile del dat, camara, anti-pantalla-negra); captura del telefono pendiente |
 | M3 Objetos y centro urbano | no iniciado |
 | M4 Unidades que se mueven | no iniciado |
 | M5 Economia y construccion (fin Nivel 2) | no iniciado |
@@ -83,6 +83,26 @@ Advertencia honesta: el layout del dat esta verificado para Rise of Rome. Para e
 4. Los cuerpos de Graphic no viven en el flujo secuencial: se alcanzan por puntero (el generador los movio a la cola no parseada).
 5. PlayerColor en ROR es distinto al de AoK (sin player_color_base): corregido antes de escribir el lector.
 
+## M2 - mapa visible (criterios de aceptacion)
+
+| Criterio (spec §6 M2) | Estado | Evidencia |
+| --- | --- | --- |
+| Mapa de prueba generado por codigo (64x64) con varios terrenos | OK | `src/game/mapa.cpp`: lago con orilla, rio sinuoso, parches de tierra; formulas puras sin azar; `m2_tests` paso 3 verifica 64x64 y los 4 terrenos |
+| Dibujo isometrico con camara desplazable | OK | `src/render/isometrico.cpp` (rombos 48x24, teselado exacto); camara por arrastre (dedo/mause/flechas) con limites; `m2_tests` paso 2/3 + PNG `m2_mapa.bmp.png` |
+| Modo de depuracion obligatorio (mapa en memoria, mosaicos dibujados/fallidos con causa, camara) | OK | overlay en pantalla con dimensiones, conteo de terrenos, tile y origen, camara, intentados/dibujados/fuera/fallidos + causa; guarda anti-pantalla-negra con banner y FATAL (paso 6) |
+| Tamano y proyeccion de mosaicos contra archivos reales | OK | el tile **se lee del dat** (inflado + `leerDat`): sintetico en CI (`--dat`, paso 3), real del usuario en el telefono (preferente sobre el sintetico); 48x24 con mitad 24x12 confirmado en ambos caminos |
+| Evidencia: PNG en CI con sinteticos | OK | `m2_mapa.bmp.png` (960x540, artefacto CI); determinismo byte a byte entre ejecuciones (paso 5) |
+| Evidencia: captura del usuario con reales | PENDIENTE | se pide una sola captura del mapa con el dat real importado (no bloquea el avance) |
+
+### Decisiones de M2
+
+- El mapa vive en `src/game/` (sin SDL ni assets): el render solo lo lee (spec §4).
+- Proyeccion diamante: pantalla = ((x-y)*medioAncho, (x+y)*medioAlto) + camara; el rombo de 48x24 tesela el plano sin solapes (terreno plano sin elevacion todavia).
+- Los limites de camara garantizan que el mapa nunca desaparezca por completo; la demo los fuerza deliberadamente (38 ajustes en 40 cuadros, registrado).
+- Prueba negativa propia: `AOE_M2_TEST_NEGRO=1` suprime el dibujo y el binario DEBE salir con error y causa (guarda anti-negro verificada en CI, paso 6).
+- `--dat RUTA` en la demo exige un dat legible; truncado o corrupto -> exit 1 con causa (paso 7).
+- Exportacion PNG propia (escritor del M1) reutilizada para la evidencia; sin dependencias nuevas.
+
 ## Decisiones tecnicas registradas
 
 - SDL2 2.32.10 fijada con SHA-256 (`scripts/fetch_sdl.sh`); nunca se versiona en el repo.
@@ -94,18 +114,19 @@ Advertencia honesta: el layout del dat esta verificado para Rise of Rome. Para e
 - Color de jugador: indice de paleta = base + indice SLP (base 16*jugador por defecto; el dat real aportara la base por jugador cuando se verifique).
 - Determinismo: el generador sintetico no usa azar; las pruebas comparan byte a byte.
 
-## Proximo hito (M2) - checklist
+## Proximo hito (M3) - checklist
 
-- [ ] Mapa de prueba generado por codigo (64x64) con varios terrenos
-- [ ] Dibujo isometrico de terreno con camina (camara desplazable)
-- [ ] Modo depuracion obligatorio (mapa en memoria, mosaicos dibujados/fallidos con causa, camara)
-- [ ] Verificar tamano/proyeccion de mosaicos contra archivos reales (dat: tile=48x24, mitad 24x12)
+- [ ] Objetos estaticos: arboles, oro, piedra, arbustos de comida (SLP de los sinteticos y del dat real)
+- [ ] Un edificio inicial (centro urbano) con sprite SLP + colores de jugador
+- [ ] Orden de dibujo por profundidad (lo mas abajo en pantalla se dibuja encima)
+- [ ] Colocacion determinista de objetos sobre el mapa de prueba
 - [ ] Evidencia: PNG en CI con sinteticos + captura del usuario con reales
 
-## Lo que el usuario debe hacer para cerrar M1 (una sola cosa por paso)
+## Lo que el usuario debe hacer para cerrar M1+M2 (una sola vez, sin prisa)
 
-1. Instalar el APK nuevo (artefacto `aoe-mobile-M1-debug-apk` del ultimo run de CI).
+1. Instalar el APK nuevo (artefacto `aoe-mobile-M2-debug-apk` del ultimo run de CI).
 2. Tocar GENERAR (crea datos sinteticos) y luego ASSETCHECK: debe decir `12 OK, 0 FALLIDOS`.
 3. Tocar DUMP SLP: aparece el sprite sintetico y el PNG queda en files/dumps/.
 4. IMPORTAR: elegir sus archivos reales del AoE1 (interfac.drs, graphics.drs, empires.dat; seleccion multiple) y el chequeo corre solo.
-5. COMPARTIR: enviar el informe por texto; y una captura de pantalla del sprite con datos reales.
+5. COMPARTIR: enviar el informe por texto.
+6. MAPA (M2): arrastrar el dedo para mover la camara y enviar UNA captura del mapa (con el dat real importado, el overlay dira `empires.dat` como origen del tile).

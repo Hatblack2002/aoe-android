@@ -7,7 +7,7 @@ on:
 
 jobs:
   desktop-selftest:
-    name: Autoprueba de escritorio + pruebas M1 (sin ventana)
+    name: Autoprueba de escritorio + pruebas M1/M2 (sin ventana)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +35,9 @@ jobs:
       - name: Pruebas M1 (datos sinteticos, lectores DRS/SLP/paleta/dat, corruptos)
         run: ./scripts/m1_tests.sh build-desktop
 
+      - name: Pruebas M2 (mapa isometrico, tile del dat, camara, anti-pantalla-negra)
+        run: ./scripts/m2_tests.sh build-desktop
+
       - name: "Demo M1 en pantalla con captura"
         run: |
           rm -rf /home/runner/.local/share/aoe-mobile/m1
@@ -47,7 +50,7 @@ jobs:
       - name: Subir evidencia
         uses: actions/upload-artifact@v4
         with:
-          name: evidencia-M0-M1
+          name: evidencia-M0-M2
           path: |
             build-desktop/selftest.bmp
             build-desktop/selftest_m1.bmp
@@ -59,6 +62,10 @@ jobs:
             build-desktop/m1/MANIFIESTO.txt
             build-desktop/m1_assetcheck_ok.txt
             build-desktop/m1_gendata.txt
+            build-desktop/m2_mapa.bmp
+            build-desktop/m2_mapa.bmp.png
+            build-desktop/m2run1/game.log
+            build-desktop/m2_gendata.txt
           if-no-files-found: error
 
   android-apk:
@@ -83,10 +90,10 @@ jobs:
         run: gradle -p android-project assembleDebug --no-daemon --stacktrace
 
       - name: Preparar artefacto
-        run: cp android-project/app/build/outputs/apk/debug/app-debug.apk aoe-mobile-M1-debug.apk
+        run: cp android-project/app/build/outputs/apk/debug/app-debug.apk aoe-mobile-M2-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: aoe-mobile-M1-debug-apk
-          path: aoe-mobile-M1-debug.apk
+          name: aoe-mobile-M2-debug-apk
+          path: aoe-mobile-M2-debug.apk
           if-no-files-found: error
