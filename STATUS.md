@@ -5,7 +5,7 @@ Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especifi
 | Hito | Estado |
 | --- | --- |
 | M0 Esqueleto | COMPLETO (CI verde + APK instalado + registro y verificacion del usuario) |
-| M1 Lectura de datos | CI verde con datos sinteticos; pendiente ejecutar assetcheck/dumpslp en el telefono con archivos reales |
+| M1 Lectura de datos | CI verde con datos sinteticos (run 40640469585); pendiente ejecutar assetcheck/dumpslp en el telefono con archivos reales |
 | M2 Mapa visible | no iniciado |
 | M3 Objetos y centro urbano | no iniciado |
 | M4 Unidades que se mueven | no iniciado |
@@ -16,7 +16,7 @@ Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especifi
 
 ## M0 - criterios de aceptacion (COMPLETO)
 
-Runs de CI: https://github.com/Hatblack2002/aoe-android/actions/runs/40600155908 (APK M0) y el run de M1 (mismo flujo, version 0.2.0).
+Runs de CI: https://github.com/Hatblack2002/aoe-android/actions/runs/40600155908 (APK M0, 742 KB) y https://github.com/Hatblack2002/aoe-android/actions/runs/40640469585 (M1: pruebas + APK 981 KB + evidencia).
 
 | Criterio (spec §6 M0) | Estado | Evidencia |
 | --- | --- | --- |
