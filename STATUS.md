@@ -52,6 +52,8 @@ El usuario confirmo ademas que lo que ve en el telefono coincide con la captura 
 
 ## M1 - lectura de datos (criterios de aceptacion)
 
+Run de CI 0.3.1: https://github.com/Hatblack2002/aoe-android/actions/runs/40791321281 (pruebas M1 11/11 + M2 + APK 0.3.1-m1diag de 1013 KB). Evidencia del escritorio del agente: `m1_diagnostico_pantalla` en download/ (escenario simulado: 4 archivos basura con los nombres/mayusculas del telefono -> 13 OK / 4 FALLIDOS con causas completas en pantalla).
+
 | Criterio (spec §6 M1) | Estado | Evidencia |
 | --- | --- | --- |
 | Leer contenedores DRS (listar por tipo e id) | OK (CI) | `src/assets/drs.cpp` según openage `doc/media/drs-files.md` + `drs.py`; assetcheck lista tablas `slp`/`bina`; pruebas en `scripts/m1_tests.sh` paso 2 |
