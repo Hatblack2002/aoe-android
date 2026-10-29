@@ -32,6 +32,7 @@
 #include "assets/paleta.h"
 #include "assets/png.h"
 #include "assets/slp.h"
+#include "assets/slp_prueba.h"
 #include "game/mapa.h"
 #include "platform/log.h"
 #include "platform/metrics.h"
@@ -197,6 +198,18 @@ bool compartirTexto(const std::string& texto) {
 // ---------------------------------------------------------------
 // Estado de la pantalla M1.
 // ---------------------------------------------------------------
+// Entrada del ciclo de sprites reales de DUMP SLP: todos los SLP de los
+// DRS importados medidos SIN decodificar (peek del frame info) y ordenados
+// de pequeno a grande, para que el primer sprite mostrado sea uno pequeno
+// y reconocible de graphics.drs (verificacion pedida para el ruido).
+struct SpriteCiclo {
+    std::string etiqueta;  // "GRAPHICS.DRS 1234" o nombre del slp suelto
+    std::string fuente;    // ruta, o "ruta.drs::id.slp"
+    int ancho = 0, alto = 0;
+    bool ok = false;       // se pudieron leer dimensiones
+    std::string causa;     // causa exacta si no se pudo leer
+};
+
 struct EstadoM1 {
     std::string dirBase;       // raiz de archivos (Android: external files)
     std::string dirGen;        // datos sinteticos
@@ -209,8 +222,23 @@ struct EstadoM1 {
     std::string spriteInfo;
     bool spriteReal = false;   // ORIGEN: true = archivos reales; false = sintetico
     std::string spriteCausa;   // por que cayo al sintetico (o vacio si es REAL)
-    int marcoActual = 0;       // para ciclar marcos con DUMP SLP
+    int marcoActual = 0;       // para ciclar marcos del sintetico
     int jugadroActual = 1;     // jugador para el color
+    // Ciclo de sprites reales (pequeno -> grande).
+    std::vector<SpriteCiclo> ciclo;
+    int cicloIndice = 0;
+    bool cicloListo = false;   // se reconstruye al importar
+    // Paleta resuelta para el ciclo.
+    std::string paletaRuta;    // vacia = usar la sintetica de reserva
+    std::string paletaInfo;
+    // Cache del ultimo DRS cargado (evita releer 16-25 MB por paleta+sprite).
+    std::string drsCacheRuta;
+    std::vector<uint8_t> drsCacheBytes;
+    // Paginacion del informe en pantalla (defecto 0.3.2: las ultimas 24
+    // lineas escondian los FALLA que quedaban arriba).
+    std::string informeFuente;            // para reconstruir el cache envuelto
+    std::vector<std::string> lineasCache;
+    int informePagina = 0;
 };
 
 std::string rutaDeLogM1(const EstadoM1&, const Opciones& op) { return rutaDeLog(op); }
@@ -227,8 +255,55 @@ void crearDir(const std::string& ruta) {
 // Anade una seccion al informe acumulado (con tope de memoria).
 void acumular(EstadoM1& e, const std::string& titulo, const std::string& texto) {
     std::string seccion = "== " + titulo + " ==\n" + texto + "\n";
-    if (e.informe.size() + seccion.size() > 24000) e.informe.clear();
+    if (e.informe.size() + seccion.size() > 48000) e.informe.clear();
     e.informe += seccion;
+}
+
+// Envuelve un texto a `anchoLinea` caracteres (misma regla que el render,
+// para poder calcular paginas y saltar a la del primer fallo).
+std::vector<std::string> envolverInforme(const std::string& texto, int anchoLinea) {
+    std::vector<std::string> lineas;
+    std::string linea;
+    auto cortar = [&]() {
+        if (linea.size() <= static_cast<std::size_t>(anchoLinea)) {
+            lineas.push_back(linea);
+            linea.clear();
+            return;
+        }
+        std::size_t i = 0;
+        while (i < linea.size()) {
+            std::size_t fin = std::min(static_cast<std::size_t>(anchoLinea), linea.size() - i);
+            if (i + fin < linea.size()) {
+                const std::size_t esp = linea.rfind(' ', i + fin);
+                if (esp != std::string::npos && esp > i + static_cast<std::size_t>(anchoLinea) / 2) {
+                    fin = esp - i;
+                }
+            }
+            lineas.push_back(linea.substr(i, fin));
+            i += fin;
+            while (i < linea.size() && linea[i] == ' ') ++i;
+        }
+        linea.clear();
+    };
+    for (char ch : texto) {
+        if (ch == '\n') {
+            cortar();
+        } else {
+            linea += ch;
+        }
+    }
+    if (!linea.empty()) cortar();
+    return lineas;
+}
+
+// Carga un DRS con cache de una entrada (sprite y paleta suelen vivir en el
+// mismo DRS: evitar releer 16-25 MB en el mismo toque).
+const std::vector<uint8_t>& drsEnCache(EstadoM1& e, const std::string& ruta) {
+    if (e.drsCacheRuta != ruta || e.drsCacheBytes.empty()) {
+        e.drsCacheBytes = assets::cargarArchivo(ruta);
+        e.drsCacheRuta = ruta;
+    }
+    return e.drsCacheBytes;
 }
 
 // Termina la ruta en `sufijo` ignorando mayusculas/minisculas (el usuario
@@ -334,82 +409,157 @@ void accionGenerar(EstadoM1& e) {
 void accionAssetcheck(EstadoM1& e) {
     const assets::ResumenChequeo r =
         assets::chequearDirectorios({e.dirGen, e.dirImport});
-    // El informe ya trae resumen por directorio, causas completas y evidencia
-    // hex de los fallos (chequeo.cpp).
+    // El informe ya trae resumen por directorio, los FALLA con evidencia
+    // completa ARRIBA y causas con offset (chequeo.cpp).
     acumular(e, "ASSETCHECK", r.informe);
     platform::Log::write("ASSETCHECK: %d OK, %d FALLIDOS", r.ok, r.fallidos);
+    // Evidencia completa tambien en el registro (logcat + game.log), troceada
+    // por lineas: la pantalla puede paginarse, el registro se comparte entero.
+    {
+        int lineasLog = 0;
+        std::string linea;
+        for (char ch : r.informe) {
+            if (ch == '\n') {
+                platform::Log::write("A[%02d] %s", lineasLog, linea.c_str());
+                ++lineasLog;
+                linea.clear();
+                if (lineasLog >= 200) {
+                    platform::Log::write("A[..] informe completo en m1_assetcheck.txt");
+                    break;
+                }
+            } else {
+                linea += ch;
+            }
+        }
+        if (!linea.empty() && lineasLog < 200) {
+            platform::Log::write("A[%02d] %s", lineasLog, linea.c_str());
+        }
+    }
     // El informe completo queda en archivo para que el usuario lo comparta.
     FILE* f = fopen((e.dirBase + "/m1_assetcheck.txt").c_str(), "wb");
     if (f) {
         fwrite(r.informe.data(), 1, r.informe.size(), f);
         fclose(f);
     }
+    // La pagina del informe salta DIRECTAMENTE al primer fallo: nunca hace
+    // falta scrollear para ver que falla y por que.
+    const std::vector<std::string> lineas = envolverInforme(e.informe, 58);
+    e.informePagina = 0;
+    for (std::size_t i = 0; i < lineas.size(); ++i) {
+        const std::string& l = lineas[i];
+        if (l.rfind("FALLA:", 0) == 0 || l.rfind("ERROR:", 0) == 0 ||
+            l.find("ERROR DEL VALIDADOR") != std::string::npos) {
+            e.informePagina = static_cast<int>(i) / 24;
+            break;
+        }
+    }
 }
 
-// Busca candidatos de sprite y paleta entre los archivos REALES importados.
-// Nunca cae al sintetico en silencio: todo intento fallido queda en `notas`
-// con su causa completa (spec §2, principio 1).
-struct Candidatos {
-    std::vector<std::string> slps;  // "ruta.slp" o "ruta.drs::id.slp", en orden
-    std::string paleta;             // "ruta.pal" o "ruta.drs::id.bina"
-    std::string infoPaleta;         // de donde salio la paleta
-    std::vector<std::string> notas; // errores y decisiones, para el informe
-    bool hayReales = false;
-};
+// Lee las dimensiones del marco 0 de un SLP SIN decodificar sus pixeles
+// (peek del frame info). Barato: permite medir cientos de sprites de un DRS
+// sin decodificarlos.
+bool dimensionesSlpSinDecodificar(const std::vector<uint8_t>& bytes,
+                                  const std::string& etiqueta, const std::string& prefijo,
+                                  int* ancho, int* alto, std::string* causa) {
+    try {
+        assets::DecodificadorSLP slp(bytes.data(), bytes.size(), etiqueta);
+        if (slp.numMarcos() < 1) {
+            *causa = conNombre(etiqueta, "0 marcos", prefijo);
+            return false;
+        }
+        const assets::DimsMarco d = slp.dimensionesMarco(0);
+        if (d.ancho <= 0 || d.alto <= 0 || d.ancho > 2048 || d.alto > 2048) {
+            *causa = conNombre(etiqueta, "dimensiones fuera de rango " + std::to_string(d.ancho) +
+                                             "x" + std::to_string(d.alto),
+                               prefijo);
+            return false;
+        }
+        *ancho = d.ancho;
+        *alto = d.alto;
+        return true;
+    } catch (const assets::ErrorDatos& err) {
+        *causa = conNombre(etiqueta, err.mensaje, prefijo);
+        return false;
+    }
+}
 
-Candidatos recolectarCandidatos(const EstadoM1& e) {
-    Candidatos c;
+// Construye el ciclo de sprites reales para DUMP SLP: TODOS los SLP de los
+// DRS importados (mas los sueltos), medidos sin decodificar y ordenados de
+// area ascendente: el primer sprite mostrado es el MAS PEQUENO (una silueta
+// reconocible de graphics.drs), no el fondo de 640x480 de Interfac.drs.
+// Cada entrada fallida conserva su causa completa: en la 0.3.2 las causas de
+// los sprites de graphics.drs se DESCARTABAN cuando un candidato posterior
+// (50100) tenia exito, y por eso nunca se vio por que fallaban.
+void construirCiclo(EstadoM1& e) {
+    e.ciclo.clear();
+    e.cicloIndice = 0;
+    e.paletaRuta.clear();
+    e.paletaInfo.clear();
+    e.drsCacheRuta.clear();
+    e.drsCacheBytes.clear();
+
     const std::vector<std::string> importados = assets::listarArchivos(e.dirImport);
     if (importados.empty()) {
-        c.notas.push_back("import/ esta vacio: no hay archivos reales (toca IMPORTAR)");
-        return c;
+        e.cicloListo = true;
+        return;
     }
 
-    // 1) SLP sueltos importados (extension case-insensitive).
+    // Paleta suelta (.pal): prioridad sobre los bina de los DRS.
     for (const std::string& ruta : importados) {
-        if (terminaEnCi(ruta, ".slp")) {
-            c.slps.push_back(ruta);
-        }
-    }
-    if (!c.slps.empty()) {
-        c.notas.push_back("SLP suelto(s) importado(s): " +
-                          std::to_string(c.slps.size()));
-    }
-
-    // 2) Paleta suelta importada (.pal).
-    for (const std::string& ruta : importados) {
-        if (terminaEnCi(ruta, ".pal") && c.paleta.empty()) {
-            c.paleta = ruta;
-            c.infoPaleta = nombreDeRuta(ruta) + " (suelta)";
+        if (terminaEnCi(ruta, ".pal")) {
+            e.paletaRuta = ruta;
+            e.paletaInfo = nombreDeRuta(ruta) + " (suelta)";
+            break;
         }
     }
 
-    // 3) DRS importados: primeros SLPs del primero que abra + paleta bina.
+    // 1) SLP sueltos importados.
     for (const std::string& ruta : importados) {
-        if (!terminaEnCi(ruta, ".drs")) continue;
+        if (!terminaEnCi(ruta, ".slp")) continue;
+        SpriteCiclo c;
+        c.etiqueta = nombreDeRuta(ruta);
+        c.fuente = ruta;
         try {
             const std::vector<uint8_t> bytes = assets::cargarArchivo(ruta);
-            if (assets::detectarTipo(ruta, bytes) != assets::TipoArchivo::Drs) {
-                c.notas.push_back(nombreDeRuta(ruta) + ": no es un DRS por contenido");
-                continue;
-            }
+            c.ok = dimensionesSlpSinDecodificar(bytes, c.etiqueta, e.dirImport, &c.ancho,
+                                                &c.alto, &c.causa);
+        } catch (const assets::ErrorDatos& err) {
+            c.causa = conNombre(c.etiqueta, err.mensaje, e.dirImport);
+        }
+        e.ciclo.push_back(std::move(c));
+    }
+
+    // 2) DRS reales: se carga cada DRS UNA VEZ y se miden hasta 96 SLPs suyos.
+    for (const std::string& ruta : importados) {
+        if (!terminaEnCi(ruta, ".drs")) continue;
+        std::vector<uint8_t> bytes;
+        try {
+            bytes = assets::cargarArchivo(ruta);
+        } catch (const assets::ErrorDatos& err) {
+            SpriteCiclo c;
+            c.etiqueta = nombreDeRuta(ruta);
+            c.fuente = ruta;
+            c.causa = conNombre(c.etiqueta, err.mensaje, e.dirImport);
+            e.ciclo.push_back(std::move(c));
+            continue;
+        }
+        try {
             assets::LectorDRS drs(bytes.data(), bytes.size(), ruta);
-            int candidatosDrs = 0;
+            int tomados = 0;
             for (const assets::EntradaDRS& en : drs.info().archivos) {
-                if (en.extension == "slp" && candidatosDrs < 12) {
-                    c.slps.push_back(ruta + "::" + std::to_string(en.id) + ".slp");
-                    ++candidatosDrs;
-                }
+                if (en.extension != "slp") continue;
+                if (++tomados > 96) break;  // tope por DRS (presupuesto de tiempo/RAM)
+                SpriteCiclo c;
+                c.etiqueta = nombreDeRuta(ruta) + " " + std::to_string(en.id);
+                c.fuente = ruta + "::" + std::to_string(en.id) + ".slp";
+                const std::vector<uint8_t> recurso = drs.extraer(en);
+                c.ok = dimensionesSlpSinDecodificar(recurso, c.etiqueta, e.dirImport, &c.ancho,
+                                                    &c.alto, &c.causa);
+                e.ciclo.push_back(std::move(c));
             }
-            if (candidatosDrs > 0) {
-                c.notas.push_back(nombreDeRuta(ruta) + ": " +
-                                  std::to_string(drs.info().archivos.size()) +
-                                  " recurso(s); probando " + std::to_string(candidatosDrs) +
-                                  " sprite(s) SLP");
-            } else {
-                c.notas.push_back(nombreDeRuta(ruta) + ": abre pero no contiene SLPs");
-            }
-            if (c.paleta.empty()) {
+            // Paleta si ninguna suelta: bina 50500..50599 preferente, si no
+            // cualquier bina (el id 50500 es la paleta estandar del juego).
+            if (e.paletaRuta.empty()) {
                 const assets::EntradaDRS* pal = nullptr;
                 for (const assets::EntradaDRS& en : drs.info().archivos) {
                     if (en.extension == "bina" && en.id >= 50500 && en.id < 50600) {
@@ -426,20 +576,34 @@ Candidatos recolectarCandidatos(const EstadoM1& e) {
                     }
                 }
                 if (pal) {
-                    c.paleta = ruta + "::" + std::to_string(pal->id) + ".bina";
-                    c.infoPaleta = nombreDeRuta(ruta) + " id " + std::to_string(pal->id);
+                    e.paletaRuta = ruta + "::" + std::to_string(pal->id) + ".bina";
+                    e.paletaInfo = nombreDeRuta(ruta) + " id " + std::to_string(pal->id);
                 }
             }
         } catch (const assets::ErrorDatos& err) {
-            c.notas.push_back(conNombre(nombreDeRuta(ruta), err.mensaje, e.dirImport));
+            SpriteCiclo c;
+            c.etiqueta = nombreDeRuta(ruta);
+            c.fuente = ruta;
+            c.causa = conNombre(c.etiqueta, err.mensaje, e.dirImport);
+            e.ciclo.push_back(std::move(c));
         }
     }
-    c.hayReales = !c.slps.empty();
-    return c;
+
+    // Orden del ciclo: exitos por area ascendente; fallos al final con causa.
+    std::stable_sort(e.ciclo.begin(), e.ciclo.end(),
+                     [](const SpriteCiclo& a, const SpriteCiclo& b) {
+                         if (a.ok != b.ok) return a.ok;
+                         if (a.ok && b.ok) {
+                             return static_cast<long>(a.ancho) * a.alto <
+                                    static_cast<long>(b.ancho) * b.alto;
+                         }
+                         return false;
+                     });
+    e.cicloListo = true;
 }
 
-// Carga (SLP|DRS::id) -> bytes del recurso.
-std::vector<uint8_t> cargarRecursoSlp(const std::string& ruta) {
+// Carga (SLP|DRS::id) -> bytes del recurso, con cache del ultimo DRS.
+std::vector<uint8_t> cargarRecursoSlp(EstadoM1& e, const std::string& ruta) {
     const std::size_t sep = ruta.find("::");
     if (sep == std::string::npos) {
         return assets::cargarArchivo(ruta);
@@ -448,7 +612,7 @@ std::vector<uint8_t> cargarRecursoSlp(const std::string& ruta) {
     const std::string resto = ruta.substr(sep + 2);
     const std::size_t punto = resto.find('.');
     const uint32_t id = static_cast<uint32_t>(strtoul(resto.substr(0, punto).c_str(), nullptr, 10));
-    const std::vector<uint8_t> bytes = assets::cargarArchivo(drsRuta);
+    const std::vector<uint8_t>& bytes = drsEnCache(e, drsRuta);
     assets::LectorDRS drs(bytes.data(), bytes.size(), drsRuta);
     const assets::EntradaDRS* entrada = drs.buscar(id, "slp");
     if (!entrada) {
@@ -457,7 +621,7 @@ std::vector<uint8_t> cargarRecursoSlp(const std::string& ruta) {
     return drs.extraer(*entrada);
 }
 
-std::vector<uint8_t> cargarRecursoPaleta(const std::string& ruta) {
+std::vector<uint8_t> cargarRecursoPaleta(EstadoM1& e, const std::string& ruta) {
     const std::size_t sep = ruta.find("::");
     if (sep == std::string::npos) {
         return assets::cargarArchivo(ruta);
@@ -466,7 +630,7 @@ std::vector<uint8_t> cargarRecursoPaleta(const std::string& ruta) {
     const std::string resto = ruta.substr(sep + 2);
     const std::size_t punto = resto.find('.');
     const uint32_t id = static_cast<uint32_t>(strtoul(resto.substr(0, punto).c_str(), nullptr, 10));
-    const std::vector<uint8_t> bytes = assets::cargarArchivo(drsRuta);
+    const std::vector<uint8_t>& bytes = drsEnCache(e, drsRuta);
     assets::LectorDRS drs(bytes.data(), bytes.size(), drsRuta);
     const assets::EntradaDRS* entrada = drs.buscar(id, "bina");
     if (!entrada) {
@@ -475,61 +639,84 @@ std::vector<uint8_t> cargarRecursoPaleta(const std::string& ruta) {
     return drs.extraer(*entrada);
 }
 
+// Etiqueta segura para nombres de archivo del PNG de evidencia.
+std::string sanitizar(const std::string& s) {
+    std::string t;
+    for (char ch : s) {
+        const bool alnum = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                           (ch >= '0' && ch <= '9');
+        t += alnum ? ch : '_';
+    }
+    return t;
+}
+
 // Comodines de tamano para el informe del sprite.
 static int estado_spriteTamano(const EstadoM1& e) { return e.spriteAncho * e.spriteAlto; }
 
 void accionDump(EstadoM1& e) {
     try {
-        const Candidatos cand = recolectarCandidatos(e);
-        std::vector<std::string> fallosReales;
+        if (!e.cicloListo) construirCiclo(e);
 
-        assets::MarcoSLP marco;
-        bool obtenido = false;
-        std::string fuenteSlp;
-        int totalMarcos = 0;
-
-        // 1) Probar los candidatos reales en orden, hasta uno que decodifique.
-        for (const std::string& candidato : cand.slps) {
-            if (obtenido) break;
-            try {
-                const std::vector<uint8_t> bytesSlp = cargarRecursoSlp(candidato);
-                assets::DecodificadorSLP slp(bytesSlp.data(), bytesSlp.size(), candidato);
-                if (slp.numMarcos() < 1) {
-                    fallosReales.push_back(nombreDeRuta(candidato) + ": 0 marcos");
-                    continue;
-                }
-                if (e.marcoActual >= slp.numMarcos()) e.marcoActual = 0;
-                marco = slp.decodificarMarco(e.marcoActual);
-                if (marco.ancho <= 0 || marco.alto <= 0 ||
-                    static_cast<long>(marco.ancho) * marco.alto > 64L * 1024 * 1024) {
-                    fallosReales.push_back(nombreDeRuta(candidato) + ": marco " +
-                                           std::to_string(e.marcoActual) + " de tamano " +
-                                           std::to_string(marco.ancho) + "x" +
-                                           std::to_string(marco.alto));
-                    continue;
-                }
-                obtenido = true;
-                fuenteSlp = candidato;
-                totalMarcos = slp.numMarcos();
-            } catch (const assets::ErrorDatos& err) {
-                fallosReales.push_back(
-                    conNombre(nombreDeRuta(candidato), err.mensaje, e.dirImport));
+        // Resumen del ciclo: exitos y causas de los que no se pudieron ni
+        // leer. En la 0.3.2 esas causas se DESCARTABAN si un candidato
+        // posterior decodificaba; ahora salen SIEMPRE en el informe.
+        int exitos = 0, fallos = 0;
+        std::string causasCiclo;
+        for (const SpriteCiclo& c : e.ciclo) {
+            if (c.ok) {
+                ++exitos;
+            } else {
+                ++fallos;
+                if (fallos <= 10) causasCiclo += "\n  sin leer: " + c.causa;
             }
         }
 
-        // 2) Paleta: real si se puede; sintetica de reserva con aviso.
+        assets::MarcoSLP marco;
+        bool obtenido = false;
+        std::string etiquetaSprite;
+        int totalMarcos = 0;
+        int indiceMostrado = 0;
+        std::string causasDecod;
+
+        // Siguiente sprite del ciclo (pequeno -> grande) que decodifique.
+        // Siempre marco 0: la comparacion entre sprites debe ser estable.
+        const int n = static_cast<int>(e.ciclo.size());
+        if (n > 0) {
+            for (int intento = 0; intento < n; ++intento) {
+                const int idx = ((e.cicloIndice + intento) % n + n) % n;
+                const SpriteCiclo& c = e.ciclo[static_cast<std::size_t>(idx)];
+                if (!c.ok) break;  // los fallos quedan al final del ciclo
+                try {
+                    const std::vector<uint8_t> bytesSlp = cargarRecursoSlp(e, c.fuente);
+                    assets::DecodificadorSLP slp(bytesSlp.data(), bytesSlp.size(), c.etiqueta);
+                    totalMarcos = slp.numMarcos();
+                    marco = slp.decodificarMarco(0);
+                    obtenido = true;
+                    etiquetaSprite = c.etiqueta;
+                    indiceMostrado = idx;
+                    e.cicloIndice = (idx + 1) % n;
+                    break;
+                } catch (const assets::ErrorDatos& err) {
+                    causasDecod += "\n  fallo al decodificar: " +
+                                   conNombre(c.etiqueta, err.mensaje, e.dirImport);
+                }
+            }
+        }
+
+        // Paleta: real (cache del DRS) o sintetica de reserva con aviso.
         std::string infoPaleta;
         bool palReal = false;
         assets::Paleta paletaUsada{};
-        if (!cand.paleta.empty()) {
+        if (!e.paletaRuta.empty()) {
             try {
-                const std::vector<uint8_t> bytesPal = cargarRecursoPaleta(cand.paleta);
+                const std::vector<uint8_t> bytesPal = cargarRecursoPaleta(e, e.paletaRuta);
                 paletaUsada = assets::leerPaleta(bytesPal.data(), bytesPal.size());
-                infoPaleta = cand.infoPaleta;
+                infoPaleta = e.paletaInfo;
                 palReal = true;
             } catch (const assets::ErrorDatos& err) {
-                fallosReales.push_back(conNombre("paleta " + nombreDeRuta(cand.paleta),
-                                                 err.mensaje, e.dirImport));
+                causasDecod += "\n  paleta: " +
+                               conNombre("paleta " + nombreDeRuta(e.paletaRuta), err.mensaje,
+                                         e.dirImport);
             }
         }
         if (!palReal) {
@@ -539,33 +726,31 @@ void accionDump(EstadoM1& e) {
             infoPaleta = "sintetica (reserva)";
         }
 
-        // 3) Componer el sprite REAL, o el sintetico de reserva con la causa.
+        // Componer el sprite REAL, o el sintetico de reserva con la causa.
         std::string texto;
         if (obtenido) {
             e.spriteReal = true;
             e.spriteCausa.clear();
             const int base = 16 * e.jugadroActual;  // AoK/AoE1: 16 por jugador (verificar con dat real)
             componerSprite(marco, paletaUsada, base, e);
-            e.spriteInfo = "marco " + std::to_string(e.marcoActual) + "/" +
-                           std::to_string(totalMarcos - 1) + " " +
+            e.spriteInfo = "0/" + std::to_string(totalMarcos - 1) + " " +
                            std::to_string(marco.ancho) + "x" + std::to_string(marco.alto) +
-                           " jugador " + std::to_string(e.jugadroActual) +
-                           " | sprite: " + nombreDeRuta(fuenteSlp) +
-                           " | paleta: " + infoPaleta;
+                           " jugador " + std::to_string(e.jugadroActual) + " | sprite: " +
+                           etiquetaSprite + " | paleta: " + infoPaleta;
 
-            texto = "ORIGEN: REAL\n  sprite: " + nombreDeRuta(fuenteSlp) +
-                    " marco " + std::to_string(e.marcoActual) + "/" +
-                    std::to_string(totalMarcos - 1) + " (" + std::to_string(marco.ancho) +
-                    "x" + std::to_string(marco.alto) + ")" +
-                    "\n  paleta: " + infoPaleta;
+            texto = "ORIGEN: REAL\n  sprite: " + etiquetaSprite + " marco 0/" +
+                    std::to_string(totalMarcos - 1) + " (" + std::to_string(marco.ancho) + "x" +
+                    std::to_string(marco.alto) + ")" + "\n  paleta: " + infoPaleta +
+                    "\n  ciclo " + std::to_string(indiceMostrado + 1) + "/" + std::to_string(n) +
+                    " (pequeno->grande; toca DUMP SLP para el siguiente)";
         } else {
             e.spriteReal = false;
             e.spriteCausa.clear();
-            for (const std::string& n : cand.notas) e.spriteCausa += (e.spriteCausa.empty() ? "" : "; ") + n;
-            for (const std::string& f : fallosReales)
-                e.spriteCausa += (e.spriteCausa.empty() ? "" : "; ") + f;
+            for (const SpriteCiclo& c : e.ciclo)
+                if (!c.ok) e.spriteCausa += (e.spriteCausa.empty() ? "" : "; ") + c.causa;
+            if (!causasDecod.empty()) e.spriteCausa += causasDecod;
 
-            // Reserva sintetica (mismo flujo de siempre).
+            // Reserva sintetica (mismo flujo de siempre, ciclando marcos).
             const std::string rutaSlp = e.dirGen + "/prueba.slp";
             const std::vector<uint8_t> bytesSlp = assets::cargarArchivo(rutaSlp);
             assets::DecodificadorSLP slp(bytesSlp.data(), bytesSlp.size(), rutaSlp);
@@ -585,7 +770,8 @@ void accionDump(EstadoM1& e) {
                     "\n  sprite: prueba.slp marco " + std::to_string(e.marcoActual);
         }
 
-        // PNG de evidencia en dumps/ (el nombre dice el origen).
+        // PNG de evidencia en dumps/ (el nombre dice origen y sprite; no se
+        // pisan entre candidatos del ciclo).
         std::vector<assets::RGB> pixeles;
         pixeles.reserve(estado_spriteTamano(e));
         for (int y = 0; y < e.spriteAlto; ++y) {
@@ -601,19 +787,26 @@ void accionDump(EstadoM1& e) {
                 pixeles.push_back(c);
             }
         }
-        const std::string rutaPng = e.dirDumps + "/dump_" +
-                                    (e.spriteReal ? std::string("real_") : std::string("sint_")) +
-                                    "marco" + std::to_string(e.marcoActual) + "_p" +
-                                    std::to_string(e.jugadroActual) + ".png";
+        std::string rutaPng = e.dirDumps + "/dump_" +
+                              (e.spriteReal ? std::string("real_") : std::string("sint_"));
+        if (e.spriteReal) {
+            rutaPng += sanitizar(etiquetaSprite) + "_" + std::to_string(e.spriteAncho) + "x" +
+                       std::to_string(e.spriteAlto) + ".png";
+        } else {
+            rutaPng += "marco" + std::to_string(e.marcoActual) + "_p" +
+                       std::to_string(e.jugadroActual) + ".png";
+        }
         std::string errorPng;
         if (assets::escribirPngArchivo(rutaPng, e.spriteAncho, e.spriteAlto, pixeles, &errorPng)) {
             texto += "\n  PNG: " + nombreDeRuta(rutaPng);
         } else {
             texto += "\n  PNG fallo: " + errorPng;
         }
-        for (const std::string& n : cand.notas) texto += "\n  nota: " + n;
+        texto += causasCiclo;
+        texto += causasDecod;
+        texto += "\n  ciclo: " + std::to_string(exitos) + " sprite(s) medidos, " +
+                 std::to_string(fallos) + " sin leer";
         acumular(e, "DUMP SLP", texto);
-        e.marcoActual = (e.marcoActual + 1) % std::max(1, totalMarcos > 0 ? totalMarcos : 1);
     } catch (const assets::ErrorDatos& err) {
         acumular(e, "DUMP SLP", "ERROR: " + err.mensaje);
         e.haySprite = false;
@@ -936,6 +1129,10 @@ const Boton kBotones[6] = {
     {"MAPA (M2)", 616, FB_H - 84, 288, 64},
 };
 
+// Zona del informe (derecha, sobre los botones): un toque avanza de pagina
+// con vuelta. Cubre el informe COMPLETO aunque necesite varias paginas.
+const Boton kZonaInforme{"INFORME", 488, 64, FB_W - 488, FB_H - 170 - 64};
+
 bool enBoton(int indice, float x, float y) {
     const Boton& b = kBotones[indice];
     return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
@@ -949,6 +1146,20 @@ int main(int argc, char* argv[]) {
     const std::string rutaLog = rutaDeLog(op);
     platform::Log::init(rutaLog);
     platform::Log::write("== %s ==", AOE_VERSION_STRING);
+
+    // Autoprueba del decodificador SLP contra la especificacion de openage
+    // (slp-files.md): SLP sintetico con TODAS las clases de comandos, verificado
+    // pixel a pixel + casos negativos. En CI es condicion de pase (spec §2:
+    // la decodificacion se comprueba, no se asume).
+    {
+        std::string d;
+        const bool okSlp = assets::probarDecodificadorSLP(&d);
+        platform::Log::write("DECODIFICADOR SLP %s: %s", okSlp ? "OK" : "FALLA", d.c_str());
+        if (!okSlp) {
+            platform::Log::write("FATAL: el decodificador SLP no pasa la autoprueba");
+            return 1;
+        }
+    }
 #ifdef __ANDROID__
     platform::Log::write("SDL %s | plataforma: android", versionSdl().c_str());
 #else
@@ -1120,6 +1331,10 @@ int main(int argc, char* argv[]) {
 #endif
                     } else if (enBoton(5, x, y)) {
                         accionMapa(e2, estado);
+                    } else if (x >= kZonaInforme.x && x <= kZonaInforme.x + kZonaInforme.w &&
+                               y >= kZonaInforme.y && y <= kZonaInforme.y + kZonaInforme.h) {
+                        ++estado.informePagina;  // el render hace el ajuste circular
+                        ultimoEvento = "informe: pagina siguiente";
                     }
                 }
             } else if (ev.type == SDL_MOUSEBUTTONDOWN) {
@@ -1133,6 +1348,10 @@ int main(int argc, char* argv[]) {
                 else if (enBoton(1, x, y)) accionAssetcheck(estado);
                 else if (enBoton(3, x, y)) accionDump(estado);
                 else if (enBoton(5, x, y)) accionMapa(e2, estado);
+                else if (x >= kZonaInforme.x && x <= kZonaInforme.x + kZonaInforme.w &&
+                         y >= kZonaInforme.y && y <= kZonaInforme.y + kZonaInforme.h) {
+                    ++estado.informePagina;  // el render hace el ajuste circular
+                }
             } else if (ev.type == SDL_MOUSEBUTTONUP) {
                 if (e2.activo) manejarToqueMapa(0, 0, false);  // corta el arrastre
             } else if (ev.type == SDL_MOUSEMOTION) {
@@ -1156,7 +1375,8 @@ int main(int argc, char* argv[]) {
 #ifdef __ANDROID__
         if (g_importacionTerminada) {
             g_importacionTerminada = false;
-            accionAssetcheck(estado);  // re-chequeo automatico tras importar
+            estado.cicloListo = false;  // los sprites cambian: reconstruir ciclo
+            accionAssetcheck(estado);   // re-chequeo automatico tras importar
         }
 #endif
 
@@ -1236,60 +1456,50 @@ int main(int argc, char* argv[]) {
             }
         }
         {
-            // Informe a la derecha: lineas ENVUELTAS (nunca recortadas) y con
-            // color segun su tipo, para que la causa completa se lea entera.
+            // Informe a la derecha: PAGINADO (toca la zona para avanzar), con
+            // lineas ENVUELTAS (nunca recortadas) y color segun su tipo. La
+            // 0.3.2 solo mostraba las ultimas 24 lineas y los FALLA quedaban
+            // fuera de vista; ahora el ciclo de paginas alcanza TODO el
+            // informe y ASSETCHECK salta solo a la pagina del primer fallo.
             const int lx = 488;
             const int anchoLinea = 58;  // 58 chars x 8 px = 464 < 472 px utiles
+            const int maxLineas = 24;
             int ly = y;
             fb.drawText(lx, ly, "INFORME:", 0x6C, 0xC5, 0xC7, 1);
-            ly += 14;
-            std::vector<std::string> lineas;
-            {
-                std::string linea;
-                auto cortar = [&](const std::string& s) {
-                    if (s.size() <= static_cast<std::size_t>(anchoLinea)) {
-                        lineas.push_back(s);
-                        return;
-                    }
-                    std::size_t i = 0;
-                    while (i < s.size()) {
-                        std::size_t fin = std::min(static_cast<std::size_t>(anchoLinea),
-                                                   s.size() - i);
-                        if (i + fin < s.size()) {
-                            const std::size_t esp = s.rfind(' ', i + fin);
-                            if (esp != std::string::npos &&
-                                esp > i + static_cast<std::size_t>(anchoLinea) / 2) {
-                                fin = esp - i;
-                            }
-                        }
-                        lineas.push_back(s.substr(i, fin));
-                        i += fin;
-                        while (i < s.size() && s[i] == ' ') ++i;
-                    }
-                };
-                for (char ch : estado.informe) {
-                    if (ch == '\n') {
-                        cortar(linea);
-                        linea.clear();
-                    } else {
-                        linea += ch;
-                    }
-                }
-                if (!linea.empty()) cortar(linea);
+            if (estado.informeFuente != estado.informe) {
+                estado.informeFuente = estado.informe;
+                estado.lineasCache = envolverInforme(estado.informe, anchoLinea);
+                estado.informePagina = 0;
             }
-            const int maxLineas = 24;
-            const int inicio = lineas.size() > static_cast<std::size_t>(maxLineas)
-                                   ? static_cast<int>(lineas.size()) - maxLineas
-                                   : 0;
-            for (int i = inicio; i < static_cast<int>(lineas.size()); ++i) {
-                const std::string& l = lineas[static_cast<std::size_t>(i)];
+            const int totalLineas = static_cast<int>(estado.lineasCache.size());
+            const int paginas = std::max(1, (totalLineas + maxLineas - 1) / maxLineas);
+            if (estado.informePagina < 0) estado.informePagina = 0;
+            if (estado.informePagina >= paginas) estado.informePagina = paginas - 1;
+            // Indicador de pagina, alineado a la derecha de la cabecera.
+            char pista[40];
+            snprintf(pista, sizeof(pista), "PAG %d/%d (toca)", estado.informePagina + 1,
+                     paginas);
+            fb.drawText(FB_W - 8 - static_cast<int>(strlen(pista)) * 8, ly, pista, 0xF0, 0xC9,
+                        0x4A, 1);
+            ly += 14;
+            if (totalLineas == 0) {
+                fb.drawText(lx, ly, "(sin informe: toca GENERAR, ASSETCHECK o DUMP SLP)",
+                            0x9F, 0xB3, 0xB8, 1);
+            }
+            const int inicio = estado.informePagina * maxLineas;
+            const int fin = std::min(totalLineas, inicio + maxLineas);
+            for (int i = inicio; i < fin; ++i) {
+                const std::string& l = estado.lineasCache[static_cast<std::size_t>(i)];
                 uint8_t cr = 0xF2, cg = 0xF2, cb = 0xE6;
                 if (l.rfind("==", 0) == 0) {
                     cr = 0x6C; cg = 0xC5; cb = 0xC7;
-                } else if (l.find("ERROR:") != std::string::npos ||
+                } else if (l.rfind("FALLA:", 0) == 0 ||
+                           l.find("ERROR:") != std::string::npos ||
                            l.find("ERROR DEL VALIDADOR") != std::string::npos) {
                     cr = 0xFF; cg = 0x8A; cb = 0x8A;
-                } else if (l.rfind("  causa:", 0) == 0 || l.rfind("causa:", 0) == 0) {
+                } else if (l.rfind("  causa:", 0) == 0 || l.rfind("causa:", 0) == 0 ||
+                           l.rfind("  sin leer:", 0) == 0 ||
+                           l.rfind("  fallo al decodificar:", 0) == 0) {
                     cr = 0xFF; cg = 0xB4; cb = 0xB4;
                 } else if (l.rfind("  ", 0) == 0) {
                     cr = 0x9F; cg = 0xB3; cb = 0xB8;

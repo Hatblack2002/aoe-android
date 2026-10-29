@@ -19,7 +19,14 @@ bool Framebuffer::init(SDL_Renderer* renderer, int width, int height) {
     pixels_.assign(static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_), 0xFF000000u);
     texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888,
                                  SDL_TEXTUREACCESS_STREAMING, w_, h_);
-    return texture_ != nullptr;
+    if (!texture_) return false;
+    // Escala logica: el marco 960x540 se ajusta a la superficie fisica
+    // PRESERVANDO el aspecto (letterbox). Sin esto, el panel del telefono
+    // (p.ej. 20:9) estiraba verticalmente TODO el render y los sprites 4:3
+    // se veian deformados (defecto reportado con Interfac.drs 50100).
+    SDL_RenderSetLogicalSize(renderer_, w_, h_);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    return true;
 }
 
 inline void Framebuffer::setPixel(int x, int y, uint32_t color) {

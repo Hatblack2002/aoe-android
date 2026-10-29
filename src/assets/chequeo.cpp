@@ -337,7 +337,18 @@ std::string chequearDatos(TipoArchivo tipo, const std::vector<uint8_t>& bytes,
                 snprintf(linea, sizeof(linea), "  civ \"%s\": %u slots, %zu unidades\n",
                          c.nombre.c_str(), c.numUnidades, c.unidades.size());
                 informe += linea;
-                for (const Unidad& u : c.unidades) {
+                // Volcado capado: listar TODAS las unidades (cientos en el dat
+                // real) empujaba los demas resultados fuera de pantalla. Se
+                // muestran las primeras y el total queda en la linea de civ.
+                const std::size_t topeUnidades = 8;
+                for (std::size_t i = 0; i < c.unidades.size(); ++i) {
+                    if (i == topeUnidades) {
+                        snprintf(linea, sizeof(linea), "    ... y %zu unidades mas (no listadas)\n",
+                                 c.unidades.size() - topeUnidades);
+                        informe += linea;
+                        break;
+                    }
+                    const Unidad& u = c.unidades[i];
                     snprintf(linea, sizeof(linea),
                              "    id=%d tipo=%d \"%s\" hp=%d vel=%.2f quieto=%d\n", u.id, u.tipo,
                              u.nombre.c_str(), u.hitPoints, u.velocidad, u.graficoQuieto);
@@ -392,7 +403,12 @@ ResumenChequeo chequearDirectorios(const std::vector<std::string>& dirs) {
         if (barra != std::string::npos) etiqueta = etiqueta.substr(barra + 1);
 
         int ok = 0, mal = 0, omitidos = 0;
-        std::string cuerpo;
+        // Los FALLOS van PRIMERO, cada uno con su evidencia completa (nombre,
+        // tipo, tamano, causa con offset, cabecera defensiva y hex): la pantalla
+        // pagina el informe y el resumen de la izquierda ya no puede ocultar
+        // ninguna causa (defecto del 0.3.1 que ocultaba la del EMPIRES.DAT).
+        std::string bloquesFalla;
+        std::string detallesOk;
         for (const std::string& ruta : archivos) {
             const std::size_t barraR = ruta.rfind('/');
             const std::string nombre =
@@ -412,17 +428,17 @@ ResumenChequeo chequearDirectorios(const std::vector<std::string>& dirs) {
                 const std::string informe = chequearArchivo(ruta);
                 if (corruptoEsperado) {
                     ++mal;
-                    cuerpo += "ERROR DEL VALIDADOR: " + nombre +
-                              " es corrupto pero PASO la validacion\n";
+                    bloquesFalla += "ERROR DEL VALIDADOR: " + nombre +
+                                    " es corrupto pero PASO la validacion\n";
                 } else {
                     ++ok;
-                    cuerpo += "OK: " + nombre + "\n" + informe;
+                    detallesOk += "OK: " + nombre + "\n" + informe;
                 }
             } catch (const ErrorDatos& e) {
                 if (corruptoEsperado) {
                     ++ok;
-                    cuerpo += "CORRUPTO OK (fallo esperado): " + nombre + "\n";
-                    cuerpo += "  causa: " + acortarMensaje(e.mensaje, dir) + "\n";
+                    detallesOk += "CORRUPTO OK (fallo esperado): " + nombre + "\n";
+                    detallesOk += "  causa: " + acortarMensaje(e.mensaje, dir) + "\n";
                 } else {
                     ++mal;
                     // Entrada con evidencia completa: tipo detectado, tamano
@@ -437,16 +453,16 @@ ResumenChequeo chequearDirectorios(const std::vector<std::string>& dirs) {
                         bytes.clear();
                     }
                     char linea[160];
-                    snprintf(linea, sizeof(linea), "ERROR: %s [%s] (%zu B)\n", nombre.c_str(),
+                    snprintf(linea, sizeof(linea), "FALLA: %s [%s] (%zu B)\n", nombre.c_str(),
                              nombreTipo(tipo), bytes.size());
-                    cuerpo += linea;
+                    bloquesFalla += linea;
                     // Causa completa, sin la ruta larga (el nombre ya esta en
                     // la linea anterior y el directorio en la cabecera).
-                    cuerpo += "  causa: " + acortarMensaje(e.mensaje, dir) + "\n";
+                    bloquesFalla += "  causa: " + acortarMensaje(e.mensaje, dir) + "\n";
                     if (!bytes.empty()) {
                         const std::string insp = inspeccionarCabecera(tipo, bytes);
-                        if (!insp.empty()) cuerpo += "  " + insp + "\n";
-                        cuerpo += "  " + hexPrimerosBytes(bytes) + "\n";
+                        if (!insp.empty()) bloquesFalla += "  " + insp + "\n";
+                        bloquesFalla += "  " + hexPrimerosBytes(bytes) + "\n";
                     }
                 }
             }
@@ -454,7 +470,7 @@ ResumenChequeo chequearDirectorios(const std::vector<std::string>& dirs) {
         char linea[160];
         snprintf(linea, sizeof(linea), "%s: %zu archivo(s), %d OK, %d FALLIDOS, %d omitidos\n",
                  etiqueta.c_str(), archivos.size(), ok, mal, omitidos);
-        res.informe += linea + cuerpo;
+        res.informe += linea + bloquesFalla + detallesOk;
         res.ok += ok;
         res.fallidos += mal;
     }

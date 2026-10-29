@@ -23,6 +23,7 @@ add_library(aoe_assets STATIC
   src/assets/png.cpp
   src/assets/paleta.cpp
   src/assets/slp.cpp
+  src/assets/slp_prueba.cpp
   src/assets/drs.cpp
   src/assets/dat.cpp
   src/assets/gen.cpp

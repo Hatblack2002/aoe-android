@@ -30,6 +30,7 @@ jobs:
             --screenshot build-desktop/selftest.bmp --logdir build-desktop
           test -s build-desktop/selftest.bmp
           test -s build-desktop/game.log
+          grep -q "DECODIFICADOR SLP OK" build-desktop/game.log
           ! grep -q FATAL build-desktop/game.log
 
       - name: Pruebas M1 (datos sinteticos, lectores DRS/SLP/paleta/dat, corruptos)

@@ -5,7 +5,7 @@ Actualizado: 29 de octubre de 2026. Cada hito lista sus criterios de la especifi
 | Hito | Estado |
 | --- | --- |
 | M0 Esqueleto | COMPLETO (CI verde + APK instalado + registro y verificacion del usuario) |
-| M1 Lectura de datos | **PENDIENTE**: causa raiz de los 4 FALLIDOS CONFIRMADA y corregida en 0.3.2 — la validacion exigia bytes imprimibles donde el DRS real de 1997 lleva relleno de control (0x1A tras el copyright; hipotesis del usuario, verificada con el hexdump de artho.com y el codigo de openage). Pruebas de escritorio 12/12 en verde. Falta la verificacion del usuario con sus archivos reales para cerrar (§M1 abajo) |
+| M1 Lectura de datos | **PENDIENTE** (0.3.3): PROGRESO REAL del usuario — DRS reales y paleta real funcionan (DUMP muestra ORIGEN: REAL); ASSETCHECK da 3 OK / 1 FALLIDOS pero la causa quedaba fuera de vista (defecto de pantalla corregido) y el sprite real 50100 se veia estirado y con ruido (estirado: causa del escalado del framebuffer CORREGIDA; ruido: en verificacion con sprite pequeno de graphics.drs). Ver seccion 0.3.3 |
 | M2 Mapa visible | CI verde con datos sinteticos (run 40778921591: mapa 64x64, tile del dat, camara, anti-pantalla-negra + APK 993 KB); el tile con el DAT REAL del usuario sigue PENDIENTE (su empires.dat no pasa aun el chequeo; el mapa usa sintetico/documentado) |
 | M3 Objetos y centro urbano | no iniciado |
 | M4 Unidades que se mueven | no iniciado |
@@ -84,6 +84,33 @@ Causa visible: NINGUNA en el telefono, porque la pantalla recortaba cada linea a
 3. **(c) Limites de memoria con 16-25 MB** — DESCARTADA como causa de los 4 ERROR: un fallo de memoria mataria el proceso (bad_alloc sin capturar), y en cambio los 4 archivos produjeron lineas `ERROR:` (ErrorDatos de validacion, lanzadas DESPUES de leer el archivo completo). Ademas, los 13 chequeos sinteticos corrieron en el mismo proceso. Prueba automatica nueva (paso 10): un dat de ~26 MB (mayor que Interfac.drs) se carga, se infla y valida sin fallos.
 
 La causa exacta de cada archivo estara en el informe de la 0.3.1: cada ERROR muestra tipo detectado, tamano exacto, causa completa con offset, desglose defensivo de la cabecera (version/tipo/tablas del DRS; tipo de bloque DEFLATE del dat) y los primeros 16 bytes en hex (spec §2, principio 2: herramienta que inspecciona y reporta lo que el archivo realmente contiene).
+
+### Progreso real del telefono (29 oct 2026, APK 0.3.2) y respuesta 0.3.3
+
+El usuario confirmo con sus archivos reales: **DRS reales y paleta real funcionan** (DUMP SLP muestra ORIGEN: REAL con el sprite Interfac.drs 50100 de 640x480). M1 sigue abierto por dos defectos que reporto:
+
+1. **ASSETCHECK 3 OK / 1 FALLIDOS sin causa visible.** Causa encontrada en el codigo (no se adivino: estaba en main.cpp/chequeo.cpp): (a) el informe solo mostraba las ULTIMAS 24 lineas y el bloque de error quedaba ARRIBA, fuera de vista; (b) `acumular` borraba el informe al pasar de 24000 chars y el volcado COMPLETO de unidades del dat (cientos de lineas) lo disparaba; (c) en DUMP SLP las causas de los sprites de graphics.drs que fallaban se DESCARTABAN cuando un candidato posterior (50100) decodificaba. Correcciones 0.3.3:
+   - Los FALLA van PRIMERO en el informe, cada uno con nombre, tipo, tamano, causa con offset, cabecera defensiva y hex (chequeo.cpp).
+   - El informe en pantalla se PAGINA (indicador "PAG i/N (toca)"); tocar la zona del informe avanza la pagina; ASSETCHECK salta automaticamente a la pagina del primer fallo.
+   - Volcado de unidades del dat capado (8 por civ + total); el informe entero sigue en `m1_assetcheck.txt` y ahora TAMBIEN en el registro (game.log/logcat, 200 lineas).
+   - DUMP SLP conserva y muestra las causas de TODOS los sprites no leidos del ciclo.
+2. **El sprite real 50100 se ve estirado y con ruido.** Dos frentes:
+   - **Estirado: causa encontrada y corregida.** El marco logico 960x540 se copiaba a la superficie fisica completa del telefono (20:9) sin preservar aspecto: TODO el render se deformaba. Corregido con `SDL_RenderSetLogicalSize` (letterbox) en framebuffer.cpp.
+   - **Ruido: decodificador VERIFICADO contra la especificacion.** La semantica del decodificador se contrasto COMANDO A COMANDO contra `doc/media/slp-files.md` de openage (cabecera 32 B 2.0N; frame info cmd/outline/palette/properties; contornos con 0x8000; lesser draw/skip `>>2 o next`; greater `<<4+next`; jugador/fill/shadow `>>4 o next`; extendidos 0x4E/0x5E/0x6E/0x7E; 0x0F fin de fila): **coincide 1:1**. Ademas:
+     - Autoprueba del decodificador (`slp_prueba.cpp`): SLP sintetico 280x7 con TODAS las clases de comandos (incluidos contador-en-byte-siguiente, sombras, jugador, contornos, fila 0x8000) verificado PIXEL A PIXEL + 4 casos negativos. **PASA en local (0.3.3, exit 0): "DECODIFICADOR SLP OK: 7 filas pixel a pixel...".** Es condicion de pase del CI (paso selftest).
+     - La autoprueba demostró su valor de inmediato: al construirla, ella misma atrapó 4 defectos de sus PROPIOS fixtures (bytes de datos faltantes en greater draw, un 0x2A con conteo duplicado, cabeceras de casos negativos sin relleno hasta la tabla de comandos, expectativa textual "truncados" vs "truncado") — el decodificador hizo en cada caso lo que dicta la spec de openage y el fallo señalaba el fixture. Corregidos los fixtures; el decodificador no necesitó cambios semanticos.
+     - Diagnostico mejorado: los errores de fila ahora incluyen la posicion EXACTA del comando fallido ("fila inicia en 0x..., comando en 0x..., archivo N B"), clave para localizar datos reales problematicos.
+     - DUMP SLP ahora ordena el ciclo de sprites de PEQUENO a GRANDE (peek de dimensiones sin decodificar) y arranca por un sprite pequeno y conocido de graphics.drs (silueta nítida a x4), para verificar la decodificacion y la paleta antes del fondo 640x480.
+     - La evidencia que falta (por que fallan los sprites de graphics.drs que impedian verlos) queda REGISTRADA en el informe con su causa; el fallo del 4º archivo (import/) igualmente sale con nombre, causa y offset en la primera pagina.
+
+Lo que falta para cerrar M1 (sin adivinar, spec §2): una sola pasada del usuario con el APK 0.3.3 — ASSETCHECK (la pantalla cae en la pagina del fallo) y 2-3 toques a DUMP SLP (sprite pequeno de graphics.drs -> ... -> 50100). Con esa captura/log se identifica el archivo caido y si el ruido era solo el estirado del framebuffer (corregido) o queda un segundo defecto de decodificacion, que se corrige con esa evidencia.
+
+### Verificacion local 0.3.3 (29 oct 2026, antes del push)
+
+- Compilacion de escritorio limpia (aoe_assets + aoe, cero errores).
+- `aoe --selftest`: **exit 0** con `DECODIFICADOR SLP OK: 7 filas pixel a pixel (280x7)...4 casos negativos fallan con la causa correcta`.
+- `scripts/m1_tests.sh`: **TODAS OK** (12 grupos: DRS estructural, DRS realista 1997 byte-exacto, relleno no imprimible tolerado, dat 26 MB, rutas DRS::id).
+- `scripts/m2_tests.sh`: **TODAS OK** (mapa 960x540, PNG valido, determinismo byte a byte, anti-pantalla-negra, dat corrupto rechazado con causa).
 
 ### Causa raiz confirmada (29 oct 2026): validacion por caracteres donde el formato real trae relleno de control
 

@@ -47,6 +47,12 @@ struct InfoSLP {
     std::string comentario;
 };
 
+// Dimensiones de un marco sin decodificar sus pixeles (solo el frame info).
+struct DimsMarco {
+    int32_t ancho = 0;
+    int32_t alto = 0;
+};
+
 // Decodificador sobre los bytes del archivo .slp (o de la entrada extraida
 // de un DRS). Los marcos se decodifican bajo demanda para respetar el
 // presupuesto de RAM (spec §3).
@@ -56,6 +62,10 @@ public:
 
     const InfoSLP& info() const { return info_; }
     int32_t numMarcos() const { return info_.numMarcos; }
+
+    // Dimensiones del marco i SIN decodificar pixeles (barato: 16 bytes del
+    // frame info). Sirve para listar/ordenar sprites antes de decodificar.
+    DimsMarco dimensionesMarco(int32_t i) const;
 
     // Decodifica el marco i (0-based).
     MarcoSLP decodificarMarco(int32_t i) const;

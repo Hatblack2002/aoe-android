@@ -43,9 +43,9 @@ static void decodificarFila(const uint8_t* datos, unsigned long tam, unsigned lo
     fila.clear();
     unsigned long pos = inicioCmd;
     auto fallo = [&](const std::string& detalle) -> ErrorDatos {
-        char buf[192];
-        snprintf(buf, sizeof(buf), " (marco %d, fila %d, offset 0x%lx)", numMarco, numFila,
-                 inicioCmd);
+        char buf[224];
+        snprintf(buf, sizeof(buf), " (marco %d, fila %d, fila inicia en 0x%lx, comando en 0x%lx, archivo %lu B)",
+                 numMarco, numFila, inicioCmd, pos, tam);
         return ErrorDatos{archivo + ": " + detalle + buf};
     };
 
@@ -162,6 +162,24 @@ static void decodificarFila(const uint8_t* datos, unsigned long tam, unsigned lo
         }
         ++pos;
     }
+}
+
+DimsMarco DecodificadorSLP::dimensionesMarco(int32_t i) const {
+    if (i < 0 || i >= info_.numMarcos) {
+        throw ErrorDatos{archivo_ + ": marco " + std::to_string(i) + " fuera de rango (hay " +
+                         std::to_string(info_.numMarcos) + ")"};
+    }
+    // Frame info (slp-files.md): cmd_table_offset, outline_table_offset,
+    // palette_offset (sin uso), properties, width, height, hotspot_x, hotspot_y.
+    LectorLE r(datos_, tam_, 32 + static_cast<std::size_t>(i) * 32, archivo_);
+    r.u32("marco: cmd_table_offset");
+    r.u32("marco: outline_table_offset");
+    r.u32("marco: palette_offset (sin uso)");
+    r.u32("marco: properties");
+    DimsMarco d;
+    d.ancho = r.i32("marco: width");
+    d.alto = r.i32("marco: height");
+    return d;
 }
 
 MarcoSLP DecodificadorSLP::decodificarMarco(int32_t i) const {
