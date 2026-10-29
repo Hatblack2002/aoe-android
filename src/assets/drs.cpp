@@ -41,13 +41,32 @@ LectorDRS::LectorDRS(const uint8_t* datos, unsigned long tam, std::string nombre
     r.i32("DRS file_offset (primer archivo)");
 
     if (!imprimible(info_.copyright) || !imprimible(info_.tipo)) {
+        // Evidencia para diagnosticar: bytes crudos de copyright y tipo.
+        char hex[16 * 4 + 4];
+        for (int i = 0; i < 16; ++i) {
+            snprintf(hex + i * 3, 4, "%02X ", datos_[i]);
+        }
+        hex[16 * 3 - 1] = '\0';
+        char hexTipo[4 * 4];
+        for (int i = 0; i < 4; ++i) {
+            snprintf(hexTipo + i * 3, 4, "%02X ",
+                     datos_[44 + i < tam_ ? 44 + i : 0]);
+        }
+        hexTipo[4 * 3 - 1] = '\0';
         throw ErrorDatos{archivo_ +
                          ": la cabecera no parece un DRS (copyright/tipo con bytes "
-                         "no imprimibles). ¿Es este archivo un DRS?"};
+                         "no imprimibles). ¿Es este archivo un DRS? copyright[0..15]=" +
+                         std::string(hex) + " ftype=" + std::string(hexTipo)};
     }
     if (info_.version != "1.00") {
+        char hexV[16];
+        for (int i = 0; i < 4 && 40 + i < tam_; ++i) {
+            snprintf(hexV + i * 3, 4, "%02X ", datos_[40 + i]);
+        }
+        hexV[4 * 3 - 1] = '\0';
         throw ErrorDatos{archivo_ + ": version DRS \"" + info_.version +
-                         "\" no soportada (se espera 1.00, la de AoE1/AoK)"};
+                         "\" no soportada (se espera 1.00, la de AoE1/AoK) bytes[40..43]=" +
+                         std::string(hexV)};
     }
     if (numTablas < 0 || numTablas > 32) {
         throw ErrorDatos{archivo_ + ": numero de tablas imposible (" +

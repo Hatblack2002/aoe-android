@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "assets/drs.h"
 #include "assets/formato.h"
 #include "assets/inflate.h"
 #include "assets/paleta.h"
@@ -21,6 +22,44 @@
 #include "assets/slp.h"
 
 namespace {
+
+// Carga un recurso: ARCHIVO normal o "CONTENEDOR.drs::ID.ext" (extrae del
+// DRS por id y extension logica: "slp" o "bina"). Es el mismo camino que
+// usa la app Android con los archivos reales, probado aqui en CI.
+std::vector<uint8_t> cargarRecurso(const std::string& ruta) {
+    const std::size_t sep = ruta.find("::");
+    if (sep == std::string::npos) {
+        FILE* f = fopen(ruta.c_str(), "rb");
+        if (!f) throw assets::ErrorDatos{"no se pudo abrir " + ruta};
+        std::vector<uint8_t> bytes;
+        uint8_t bufer[65536];
+        size_t n;
+        while ((n = fread(bufer, 1, sizeof(bufer), f)) > 0) bytes.insert(bytes.end(), bufer, bufer + n);
+        fclose(f);
+        return bytes;
+    }
+    const std::string drsRuta = ruta.substr(0, sep);
+    const std::string resto = ruta.substr(sep + 2);
+    const std::size_t punto = resto.find('.');
+    const std::string ext =
+        punto == std::string::npos ? std::string("slp") : resto.substr(punto + 1);
+    const uint32_t id =
+        static_cast<uint32_t>(strtoul(resto.substr(0, punto).c_str(), nullptr, 10));
+    FILE* f = fopen(drsRuta.c_str(), "rb");
+    if (!f) throw assets::ErrorDatos{"no se pudo abrir " + drsRuta};
+    std::vector<uint8_t> bytes;
+    uint8_t bufer[65536];
+    size_t n;
+    while ((n = fread(bufer, 1, sizeof(bufer), f)) > 0) bytes.insert(bytes.end(), bufer, bufer + n);
+    fclose(f);
+    assets::LectorDRS drs(bytes.data(), bytes.size(), drsRuta);
+    const assets::EntradaDRS* entrada = drs.buscar(id, ext);
+    if (!entrada) {
+        throw assets::ErrorDatos{drsRuta + ": no contiene el recurso " +
+                                 std::to_string(id) + "." + ext};
+    }
+    return drs.extraer(*entrada);
+}
 
 assets::RGB componer(const assets::PixelSLP& p, const assets::Paleta& pal, int base,
                      int fondo) {
@@ -100,27 +139,11 @@ int main(int argc, char** argv) {
     if (base < 0) base = 16 * jugador;
 
     try {
-        // Cargar SLP.
-        FILE* f = fopen(rutaSlp.c_str(), "rb");
-        if (!f) {
-            fprintf(stderr, "dumpslp: no se pudo abrir %s\n", rutaSlp.c_str());
-            return 1;
-        }
-        std::vector<uint8_t> bytes;
-        uint8_t bufer[65536];
-        size_t n;
-        while ((n = fread(bufer, 1, sizeof(bufer), f)) > 0) bytes.insert(bytes.end(), bufer, bufer + n);
-        fclose(f);
+        // Cargar SLP (suelto o extraido de un DRS via "drs::id.slp").
+        const std::vector<uint8_t> bytes = cargarRecurso(rutaSlp);
 
-        // Cargar paleta.
-        f = fopen(rutaPal.c_str(), "rb");
-        if (!f) {
-            fprintf(stderr, "dumpslp: no se pudo abrir %s\n", rutaPal.c_str());
-            return 1;
-        }
-        std::vector<uint8_t> bytesPal;
-        while ((n = fread(bufer, 1, sizeof(bufer), f)) > 0) bytesPal.insert(bytesPal.end(), bufer, bufer + n);
-        fclose(f);
+        // Cargar paleta (suelta o extraida via "drs::id.bina").
+        const std::vector<uint8_t> bytesPal = cargarRecurso(rutaPal);
         const assets::Paleta pal = assets::leerPaleta(bytesPal.data(), bytesPal.size());
 
         // Decodificar y componer.

@@ -1,12 +1,12 @@
 # STATUS - AoE Mobile
 
-Actualizado: 28 de octubre de 2026. Cada hito lista sus criterios de la especificacion §6 con estado y evidencia. Regla: un hito solo se cierra con TODOS sus criterios cumplidos y evidencia adjunta (spec §2, principio 1).
+Actualizado: 29 de octubre de 2026. Cada hito lista sus criterios de la especificacion §6 con estado y evidencia. Regla: un hito solo se cierra con TODOS sus criterios cumplidos y evidencia adjunta (spec §2, principio 1).
 
 | Hito | Estado |
 | --- | --- |
 | M0 Esqueleto | COMPLETO (CI verde + APK instalado + registro y verificacion del usuario) |
-| M1 Lectura de datos | CI verde con datos sinteticos (run 40640469585); evidencia del telefono con archivos reales pendiente (no bloquea: el usuario pidio seguir) |
-| M2 Mapa visible | CI verde con datos sinteticos (run 40778921591: mapa 64x64, tile del dat, camara, anti-pantalla-negra + APK 993 KB); captura del telefono pendiente (no bloquea) |
+| M1 Lectura de datos | **PENDIENTE**: con sinteticos todo pasa (CI), pero los 4 archivos reales del usuario FALLAN el chequeo (13 OK / 4 FALLIDOS en el telefono, 28 oct). La pantalla ocultaba las causas (recorte a 58 chars); corregido en 0.3.1 para ver archivo+causa+offset+hex. Diagnostico en §M1 abajo |
+| M2 Mapa visible | CI verde con datos sinteticos (run 40778921591: mapa 64x64, tile del dat, camara, anti-pantalla-negra + APK 993 KB); el tile con el DAT REAL del usuario sigue PENDIENTE (su empires.dat no pasa aun el chequeo; el mapa usa sintetico/documentado) |
 | M3 Objetos y centro urbano | no iniciado |
 | M4 Unidades que se mueven | no iniciado |
 | M5 Economia y construccion (fin Nivel 2) | no iniciado |
@@ -60,9 +60,39 @@ El usuario confirmo ademas que lo que ve en el telefono coincide con la captura 
 | Leer tabla de unidades/edificios (con su compresion) | OK (CI) | `empires.dat` = DEFLATE crudo (openage `gamedata.py`: zlib -15) + estructura ROR campo a campo (openage `datfile/`); inflador propio RFC1951; cross-check contra zlib real de python (paso 6); 9 tipos de unidad (10..90) parseados (paso 2) |
 | Herramienta assetcheck | OK | `tools/assetcheck.cpp` + modulo compartido `src/assets/chequeo.cpp` (la app Android usa el mismo criterio) |
 | Herramienta dumpslp (PNG) | OK | `tools/dumpslp.cpp` + escritor PNG propio (`src/assets/png.cpp`); 4 PNGs publicados como artefacto |
-| Pruebas CI con archivos sinteticos propios | OK | `tools/gendata.cpp` genera DRS/SLP/paleta/dat deterministas + 9 variantes corruptas; `scripts/m1_tests.sh` con 8 pasos, TODAS OK |
+| Pruebas CI con archivos sinteticos propios | OK | `tools/gendata.cpp` genera DRS/SLP/paleta/dat deterministas + 9 variantes corruptas; `scripts/m1_tests.sh` con 11 pasos, TODAS OK |
 | Archivos truncados/corruptos fallan con error claro | OK | 9 casos negativos: truncados al 30-60%, cabeceras malas, comando SLP no soportado, fila corta, unit_offset fuera de rango; todos fallan con causa y offset exacto (paso 5) |
-| **Evidencia con archivos reales (usuario)** | PENDIENTE | el usuario ejecuta en el telefono: ASSETCHECK (tras IMPORTAR sus archivos) y DUMP SLP, y comparte texto + captura |
+| **Evidencia con archivos reales (usuario)** | **FALLIDO → en diagnostico** | 28 oct: telefono con 4 archivos reales importados (Empires.dat, graphics.drs, Interfac.drs, Terrain.drs): **13 OK, 4 FALLIDOS**. Las 4 lineas de ERROR salian recortadas y la causa no se leia (bug de pantalla: recorte a 58 chars); DUMP SLP caia al sintetico en silencio. Corregido en 0.3.1 (ver abajo) |
+
+### Resultado real del telefono (28 oct 2026) y descarte de hipotesis
+
+El usuario importo sus 4 archivos reales con IMPORTAR y el chequeo dio `ASSETCHECK: 13 OK, 4 FALLIDOS` (los 13 sinteticos pasan; los 4 reales fallan la validacion). Los datos tecnicos del resultado:
+
+| Archivo | Tamano declarado por el usuario | Resultado |
+| --- | --- | --- |
+| Empires.dat | ~2.5 MB | FALLIDO |
+| graphics.drs | ~16 MB | FALLIDO |
+| Interfac.drs | ~25 MB | FALLIDO |
+| Terrain.drs | (sin dato) | FALLIDO |
+
+Causa visible: NINGUNA en el telefono, porque la pantalla recortaba cada linea a 58 caracteres. Eso era un bug de presentacion, ya corregido. Hipotesis planteadas por el usuario y su estado:
+
+1. **(a) Layout de Empires.dat 1997 vs Rise of Rome** — SIGUE VIVA para el dat: el lector esta verificado contra el layout ROR (STATUS/«Formatos verificados»), y la propia nota honesta de `dat.h` advierte que el 1997 puede diferir en alguna constante. Para los DRS en cambio NO explica los fallos: la doc de openage (drs-files.md) y la referencia de 1997 (artho.com/age/drs.html) coinciden en que el DRS de AoE1 usa la MISMA forma que ya implementamos (cabecera 64 B, version "1.00", tablas 12 B, entradas 12 B).
+2. **(b) Nombres con mayusculas** — DESCARTADA con evidencia: el validador NO busca nombres fijos, ENUMERA el directorio (`listarArchivos`) y lower-casea la extension (`detectarTipo`); IMPORTAR copia con el nombre original. Prueba automatica nueva (paso 9): `Empires.dat`, `Graphics.drs`, `Interfac.drs`, `Terrain.drs`, `PALETA.PAL` validan 5 OK / 0 FALLIDOS.
+3. **(c) Limites de memoria con 16-25 MB** — DESCARTADA como causa de los 4 ERROR: un fallo de memoria mataria el proceso (bad_alloc sin capturar), y en cambio los 4 archivos produjeron lineas `ERROR:` (ErrorDatos de validacion, lanzadas DESPUES de leer el archivo completo). Ademas, los 13 chequeos sinteticos corrieron en el mismo proceso. Prueba automatica nueva (paso 10): un dat de ~26 MB (mayor que Interfac.drs) se carga, se infla y valida sin fallos.
+
+La causa exacta de cada archivo estara en el informe de la 0.3.1: cada ERROR muestra tipo detectado, tamano exacto, causa completa con offset, desglose defensivo de la cabecera (version/tipo/tablas del DRS; tipo de bloque DEFLATE del dat) y los primeros 16 bytes en hex (spec §2, principio 2: herramienta que inspecciona y reporta lo que el archivo realmente contiene).
+
+### Correcciones 0.3.1 (diagnostico con archivos reales)
+
+1. Pantalla: las lineas del informe se ENVUELVEN (nunca se recortan a 58 chars) y van coloreadas por tipo (ERROR rojo, causa, OK verde, resumen ambar).
+2. Informe ASSETCHECK estructurado: por directorio (`gen: 15 archivos, 13 OK...` / `import: 4 archivos, 0 OK, 4 FALLIDOS`), cada ERROR con tamano, causa completa, cabecera defensiva y hex; el informe completo sigue quedando en `m1_assetcheck.txt`.
+3. DUMP SLP: prueba hasta 12 sprites SLP de los DRS reales en orden; paleta real preferente (bina 50500-50599, si no cualquier bina, si no .pal suelta); la pantalla muestra un LETRERO grande **ORIGEN: REAL** (verde) u **ORIGEN: SINTETICO (reserva)** (ambar) con la causa del recurso; PNGs nombrados `dump_real_*` / `dump_sint_*`. Nunca cae al sintetico en silencio.
+4. Extensiones case-insensitive en DUMP/MAPA (`.slp`/`.pal`/`.dat` con mayusculas funcionan).
+5. Mensajes DRS enriquecidos: version incorrecta y copyright no imprimible incluyen bytes crudos en hex.
+6. Sprites reales enormes: se deciman (vecino-mas-cercano) para caber en su caja.
+7. dumpslp (CLI) acepta `CONTENEDOR.drs::ID.ext` (el mismo camino de extraccion que la app), probado en CI (paso 11).
+8. Generador: `--drs-realista` (DRS multitabla con copyright del original, forma de interfac.drs) y `--grande` (dat de ~26 MB); pasos 9-11 nuevos en `m1_tests.sh`.
 
 ### Formatos verificados contra documentacion (spec §2, principio 2)
 
@@ -91,7 +121,7 @@ Run de CI: https://github.com/Hatblack2002/aoe-android/actions/runs/40778921591 
 | Mapa de prueba generado por codigo (64x64) con varios terrenos | OK | `src/game/mapa.cpp`: lago con orilla, rio sinuoso, parches de tierra; formulas puras sin azar; `m2_tests` paso 3 verifica 64x64 y los 4 terrenos |
 | Dibujo isometrico con camara desplazable | OK | `src/render/isometrico.cpp` (rombos 48x24, teselado exacto); camara por arrastre (dedo/mause/flechas) con limites; `m2_tests` paso 2/3 + PNG `m2_mapa.bmp.png` |
 | Modo de depuracion obligatorio (mapa en memoria, mosaicos dibujados/fallidos con causa, camara) | OK | overlay en pantalla con dimensiones, conteo de terrenos, tile y origen, camara, intentados/dibujados/fuera/fallidos + causa; guarda anti-pantalla-negra con banner y FATAL (paso 6) |
-| Tamano y proyeccion de mosaicos contra archivos reales | OK | el tile **se lee del dat** (inflado + `leerDat`): sintetico en CI (`--dat`, paso 3), real del usuario en el telefono (preferente sobre el sintetico); 48x24 con mitad 24x12 confirmado en ambos caminos |
+| Tamano y proyeccion de mosaicos contra archivos reales | PENDIENTE (corregido el reclamo) | el tile 48x24 (mitad 24x12) viene del dat SINTETICO en CI y de valores documentados en el telefono: el empires.dat real del usuario NO pasa aun el chequeo (M1), por lo que nunca llego a alimentar el tile; se cerrara cuando el dat real valide |
 | Evidencia: PNG en CI con sinteticos | OK | `m2_mapa.bmp.png` (960x540, artefacto CI); determinismo byte a byte entre ejecuciones (paso 5) |
 | Evidencia: captura del usuario con reales | PENDIENTE | se pide una sola captura del mapa con el dat real importado (no bloquea el avance) |
 
@@ -129,11 +159,10 @@ Run de CI: https://github.com/Hatblack2002/aoe-android/actions/runs/40778921591 
 - [ ] Colocacion determinista de objetos sobre el mapa de prueba
 - [ ] Evidencia: PNG en CI con sinteticos + captura del usuario con reales
 
-## Lo que el usuario debe hacer para cerrar M1+M2 (una sola vez, sin prisa)
+## Lo que el usuario debe hacer para diagnosticar M1 (0.3.1)
 
-1. Instalar el APK nuevo (artefacto `aoe-mobile-M2-debug-apk` del ultimo run de CI).
-2. Tocar GENERAR (crea datos sinteticos) y luego ASSETCHECK: debe decir `12 OK, 0 FALLIDOS`.
-3. Tocar DUMP SLP: aparece el sprite sintetico y el PNG queda en files/dumps/.
-4. IMPORTAR: elegir sus archivos reales del AoE1 (interfac.drs, graphics.drs, empires.dat; seleccion multiple) y el chequeo corre solo.
-5. COMPARTIR: enviar el informe por texto.
-6. MAPA (M2): arrastrar el dedo para mover la camara y enviar UNA captura del mapa (con el dat real importado, el overlay dira `empires.dat` como origen del tile).
+1. Instalar el APK nuevo (artefacto del ultimo run de CI, version 0.3.1).
+2. ASSETCHECK (sin necesidad de re-importar: los archivos siguen en import/): ahora las 4 causas COMPLETAS se leen en pantalla (envueltas, con offset y hex). La seccion `import:` lista cada archivo con su tamano exacto.
+3. COMPARTIR: el texto incluye el informe completo (y queda en `m1_assetcheck.txt`). Enviarlo tal cual.
+4. DUMP SLP: la pantalla dira ORIGEN: REAL (verde) si algun sprite de los DRS reales decodifica, u ORIGEN: SINTETICO (reserva) (ambar) con la causa exacta de cada DRS reprobado.
+5. Con ese informe se cierra M1: o los errores revelan un ajuste concreto del formato (se corrige con evidencia, spec §8), o los archivos pasan y queda la evidencia REAL en pantalla.

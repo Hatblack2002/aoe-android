@@ -23,4 +23,15 @@ namespace assets {
 // no puede escribir. Devuelve el numero de archivos generados.
 int generarDatosPrueba(const std::string& dir);
 
+// Extra (pruebas CI): DRS "estilo real" con 3 tablas (' pls', 'anib', ' wav')
+// y 5 recursos, con el copyright del original documentado en artho.com
+// (INTERFAC.DRS es el DRS con varias tablas). Devuelve 1 o -1 al no poder
+// escribir.
+int generarDrsRealista(const std::string& dir);
+
+// Extra (pruebas CI): dat valido de ~26 MB (payload + cola de ceros,
+// comprimido en bloques almacenados). Sirve para DESCARTAR los limites de
+// memoria como causa de fallo con archivos reales de 16-25 MB.
+int generarGrande(const std::string& dir, unsigned mb);
+
 } // namespace assets

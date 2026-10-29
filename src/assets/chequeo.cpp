@@ -7,6 +7,7 @@
 #include "assets/slp.h"
 
 #include <algorithm>
+#include <cctype>
 #include <dirent.h>
 #include <cstdio>
 #include <cstring>
@@ -59,7 +60,8 @@ TipoArchivo detectarTipo(const std::string& ruta, const std::vector<uint8_t>& by
 std::vector<uint8_t> cargarArchivo(const std::string& ruta) {
     FILE* f = fopen(ruta.c_str(), "rb");
     if (!f) {
-        throw ErrorDatos{"no se pudo abrir " + ruta};
+        throw ErrorDatos{"no se pudo abrir " + ruta +
+                         " (¿existe y tiene permisos de lectura?)"};
     }
     std::vector<uint8_t> bytes;
     uint8_t bufer[65536];
@@ -74,6 +76,126 @@ std::vector<uint8_t> cargarArchivo(const std::string& ruta) {
     }
     return bytes;
 }
+
+// ---------------------------------------------------------------
+// Inspeccion defensiva para los ERRORES: dice lo que el archivo
+// realmente contiene (spec §2, principio 2: si hay duda, herramienta
+// que inspeccione y reporte). Nunca lanza: todo es tolerado aqui.
+// ---------------------------------------------------------------
+namespace {
+
+std::string asciiLegible(const uint8_t* d, std::size_t n) {
+    std::string t;
+    for (std::size_t i = 0; i < n; ++i) {
+        const char c = static_cast<char>(d[i]);
+        t += (c >= 0x20 && c <= 0x7E) ? c : '.';
+    }
+    return t;
+}
+
+// Quita un prefijo de ruta de un mensaje (para que la causa quepa en pantalla).
+std::string acortarMensaje(const std::string& msg, const std::string& prefijo) {
+    if (prefijo.empty() || prefijo.size() + 1 > msg.size()) return msg;
+    std::string s = msg;
+    const std::string conBarra = prefijo + (prefijo.back() == '/' ? "" : "/");
+    std::size_t pos = 0;
+    while ((pos = s.find(conBarra, pos)) != std::string::npos) {
+        s.replace(pos, conBarra.size(), "");
+        pos += 1;
+    }
+    return s;
+}
+
+std::string hexPrimerosBytes(const std::vector<uint8_t>& bytes, std::size_t n = 16) {
+    static const char* h = "0123456789ABCDEF";
+    const std::size_t n2 = std::min(n, bytes.size());
+    std::string s = "primeros bytes: ";
+    if (n2 == 0) s += "(archivo vacio)";
+    char buf[4];
+    for (std::size_t i = 0; i < n2; ++i) {
+        buf[0] = h[bytes[i] >> 4];
+        buf[1] = h[bytes[i] & 0x0F];
+        buf[2] = ' ';
+        buf[3] = '\0';
+        s += buf;
+    }
+    s += " '";
+    s += asciiLegible(bytes.data(), n2);
+    s += "'";
+    return s;
+}
+
+long u32Seguro(const std::vector<uint8_t>& b, std::size_t off) {
+    return off + 4 <= b.size() ? static_cast<long>(leerU32(b.data() + off)) : -1L;
+}
+
+// Extension logica DRS (invertida + recortada), tolerante: solo ASCII
+// imprimible (los archivos basura no deben meter caracteres raros).
+std::string extensionInvertida(const uint8_t* d) {
+    std::string inv;
+    for (int i = 3; i >= 0; --i) {
+        const char c = static_cast<char>(d[i]);
+        if (c >= 0x21 && c <= 0x7E) inv += static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    }
+    return inv;
+}
+
+std::string inspeccionarCabecera(TipoArchivo tipo, const std::vector<uint8_t>& b) {
+    std::string s;
+    char linea[192];
+    switch (tipo) {
+        case TipoArchivo::Drs: {
+            if (b.size() < 64) break;
+            snprintf(linea, sizeof(linea), "cabecera: version '%s' tipo '%s' tablas=%ld primer_archivo=0x%lx",
+                     asciiLegible(b.data() + 40, 4).c_str(),
+                     asciiLegible(b.data() + 44, 12).c_str(), u32Seguro(b, 56), u32Seguro(b, 60));
+            s += linea;
+            const long tablas = u32Seguro(b, 56);
+            for (long i = 0; tablas >= 0 && i < tablas && i < 8; ++i) {
+                const std::size_t off = 64 + static_cast<std::size_t>(i) * 12;
+                if (off + 12 > b.size()) break;
+                snprintf(linea, sizeof(linea), "  tabla %ld: '%s' offset=0x%lx archivos=%ld",
+                         i, extensionInvertida(b.data() + off).c_str(), u32Seguro(b, off + 4),
+                         u32Seguro(b, off + 8));
+                s += "\n";
+                s += linea;
+            }
+            break;
+        }
+        case TipoArchivo::Slp: {
+            if (b.size() < 32) break;
+            snprintf(linea, sizeof(linea), "cabecera: version '%s' marcos=%ld",
+                     asciiLegible(b.data(), 4).c_str(), u32Seguro(b, 4));
+            s += linea;
+            break;
+        }
+        case TipoArchivo::Dat: {
+            // El dat esperado es DEFLATE crudo: el primer byte codifica el
+            // tipo de bloque (bits 1-2). Lo mostramos para diagnosticar.
+            if (b.size() < 1) break;
+            const int btype = (b[0] >> 1) & 0x03;
+            const char* nombres[4] = {"almacenado", "fijo", "dinamico", "INVALIDO(3)"};
+            snprintf(linea, sizeof(linea),
+                     "si fuera DEFLATE crudo: primer byte 0x%02X -> bloque %s",
+                     b[0], nombres[btype]);
+            s += linea;
+            break;
+        }
+        case TipoArchivo::Paleta: {
+            // Primera linea de texto (hasta \n o 31 bytes).
+            std::size_t fin = 0;
+            while (fin < b.size() && fin < 31 && b[fin] != '\n' && b[fin] != '\r') ++fin;
+            snprintf(linea, sizeof(linea), "primera linea: '%s'", asciiLegible(b.data(), fin).c_str());
+            s += linea;
+            break;
+        }
+        default:
+            break;
+    }
+    return s;
+}
+
+} // namespace
 
 std::string chequearDatos(TipoArchivo tipo, const std::vector<uint8_t>& bytes,
                           const std::string& nombreVisible) {
@@ -151,7 +273,7 @@ std::string chequearDatos(TipoArchivo tipo, const std::vector<uint8_t>& bytes,
                     informe += linea;
                 }
             }
-            snprintf(linea, sizeof(linea), "  bytes sin parsear (cola): %zu",
+            snprintf(linea, sizeof(linea), "  bytes sin parsear (cola): %zu\n",
                      dat.bytesSinParsear);
             informe += linea;
             return informe;
@@ -192,13 +314,22 @@ std::vector<std::string> listarArchivos(const std::string& dir) {
 ResumenChequeo chequearDirectorios(const std::vector<std::string>& dirs) {
     ResumenChequeo res;
     for (const std::string& dir : dirs) {
-        for (const std::string& ruta : listarArchivos(dir)) {
-            const std::size_t barra = ruta.rfind('/');
-            const std::string nombre = barra == std::string::npos ? ruta : ruta.substr(barra + 1);
+        const std::vector<std::string> archivos = listarArchivos(dir);
+        // Etiqueta corta del directorio (ultima componente de la ruta).
+        std::string etiqueta = dir;
+        const std::size_t barra = etiqueta.find_last_of('/');
+        if (barra != std::string::npos) etiqueta = etiqueta.substr(barra + 1);
+
+        int ok = 0, mal = 0, omitidos = 0;
+        std::string cuerpo;
+        for (const std::string& ruta : archivos) {
+            const std::size_t barraR = ruta.rfind('/');
+            const std::string nombre =
+                barraR == std::string::npos ? ruta : ruta.substr(barraR + 1);
             // Auxiliares que no son objetivo de validacion.
             if (nombre.find("MANIFIESTO") != std::string::npos ||
                 nombre.find("payload") != std::string::npos) {
-                res.informe += "(omitido) " + ruta + "\n";
+                ++omitidos;
                 continue;
             }
             // Los archivos sinteticos corruptos (trunc*/bad*) DEBEN fallar:
@@ -209,24 +340,52 @@ ResumenChequeo chequearDirectorios(const std::vector<std::string>& dirs) {
             try {
                 const std::string informe = chequearArchivo(ruta);
                 if (corruptoEsperado) {
-                    ++res.fallidos;
-                    res.informe += "ERROR DEL VALIDADOR: " + ruta +
-                                   " es corrupto pero PASO la validacion\n";
+                    ++mal;
+                    cuerpo += "ERROR DEL VALIDADOR: " + nombre +
+                              " es corrupto pero PASO la validacion\n";
                 } else {
-                    ++res.ok;
-                    res.informe += "OK: " + ruta + "\n" + informe;
+                    ++ok;
+                    cuerpo += "OK: " + nombre + "\n" + informe;
                 }
             } catch (const ErrorDatos& e) {
                 if (corruptoEsperado) {
-                    ++res.ok;
-                    res.informe +=
-                        "CORRUPTO OK (fallo esperado): " + ruta + ": " + e.mensaje + "\n";
+                    ++ok;
+                    cuerpo += "CORRUPTO OK (fallo esperado): " + nombre + "\n";
+                    cuerpo += "  causa: " + acortarMensaje(e.mensaje, dir) + "\n";
                 } else {
-                    ++res.fallidos;
-                    res.informe += "ERROR: " + ruta + ": " + e.mensaje + "\n";
+                    ++mal;
+                    // Entrada con evidencia completa: tipo detectado, tamano
+                    // exacto, causa completa, desglose defensivo de la
+                    // cabecera y primeros bytes en hex.
+                    std::vector<uint8_t> bytes;
+                    TipoArchivo tipo = TipoArchivo::Desconocido;
+                    try {
+                        bytes = cargarArchivo(ruta);
+                        tipo = detectarTipo(ruta, bytes);
+                    } catch (const ErrorDatos&) {
+                        bytes.clear();
+                    }
+                    char linea[160];
+                    snprintf(linea, sizeof(linea), "ERROR: %s [%s] (%zu B)\n", nombre.c_str(),
+                             nombreTipo(tipo), bytes.size());
+                    cuerpo += linea;
+                    // Causa completa, sin la ruta larga (el nombre ya esta en
+                    // la linea anterior y el directorio en la cabecera).
+                    cuerpo += "  causa: " + acortarMensaje(e.mensaje, dir) + "\n";
+                    if (!bytes.empty()) {
+                        const std::string insp = inspeccionarCabecera(tipo, bytes);
+                        if (!insp.empty()) cuerpo += "  " + insp + "\n";
+                        cuerpo += "  " + hexPrimerosBytes(bytes) + "\n";
+                    }
                 }
             }
         }
+        char linea[160];
+        snprintf(linea, sizeof(linea), "%s: %zu archivo(s), %d OK, %d FALLIDOS, %d omitidos\n",
+                 etiqueta.c_str(), archivos.size(), ok, mal, omitidos);
+        res.informe += linea + cuerpo;
+        res.ok += ok;
+        res.fallidos += mal;
     }
     char linea[96];
     snprintf(linea, sizeof(linea), "ASSETCHECK: %d OK, %d FALLIDOS\n", res.ok, res.fallidos);

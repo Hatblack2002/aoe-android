@@ -765,4 +765,94 @@ int generarDatosPrueba(const std::string& dir) {
     return escritos;
 }
 
+// ------------------------------------------------------------------
+// Extra: DRS "estilo real" con varias tablas (la forma documentada de
+// INTERFAC.DRS en artho.com/age/drs.html: el DRS con varias tablas,
+// copyright del original de 1997). Ejercita el lector contra un
+// contenedor con la forma de los archivos reales.
+// ------------------------------------------------------------------
+int generarDrsRealista(const std::string& dir) {
+    const std::string palTexto = paletaJasc();
+    const std::vector<uint8_t> palBytes(palTexto.begin(), palTexto.end());
+    const ConstructorSLP slp = construirSLP();
+    const std::vector<uint8_t> bin(40, 0xA5);  // binario generico
+    std::vector<uint8_t> wav;                  // relleno con cabecera RIFF
+    const char* riff = "RIFF0000WAVEfmt ";
+    wav.insert(wav.end(), riff, riff + 16);
+    wav.insert(wav.end(), 48, 0x00);
+
+    struct EntradaGen {
+        uint32_t id;
+        const std::vector<uint8_t>* datos;
+    };
+    struct TablaGen {
+        const char* extArchivo;  // bytes tal cual van en el archivo (invertidos)
+        std::vector<EntradaGen> entradas;
+    };
+    std::vector<TablaGen> tablas;
+    tablas.push_back({" pls", {{101, &slp.out.b}, {102, &slp.out.b}}});
+    tablas.push_back({"anib", {{50500, &palBytes}, {50501, &bin}}});
+    tablas.push_back({" wav", {{4000, &wav}}});
+
+    const std::size_t offInfos = 64 + tablas.size() * 12;
+    std::size_t numEntradas = 0;
+    for (const TablaGen& t : tablas) numEntradas += t.entradas.size();
+    const std::size_t offDatos = offInfos + numEntradas * 12;
+
+    Escritor out;
+    out.fijas("Copyright (c) 1997 Ensemble Studios.", 40);
+    out.fijas("1.00", 4);
+    out.fijas("tribe", 12);
+    out.i32(static_cast<long>(tablas.size()));
+    out.i32(static_cast<long>(offDatos));
+
+    std::vector<std::size_t> offs;
+    std::size_t cursor = offDatos;
+    for (const TablaGen& t : tablas) {
+        for (const EntradaGen& e : t.entradas) {
+            offs.push_back(cursor);
+            cursor += e.datos->size();
+        }
+    }
+    std::size_t infoCursor = offInfos;
+    for (const TablaGen& t : tablas) {
+        for (std::size_t i = 0; i < 4; ++i) out.u8(static_cast<unsigned char>(t.extArchivo[i]));
+        out.i32(static_cast<long>(infoCursor));
+        out.i32(static_cast<long>(t.entradas.size()));
+        infoCursor += t.entradas.size() * 12;
+    }
+    std::size_t idxEntrada = 0;
+    for (const TablaGen& t : tablas) {
+        for (const EntradaGen& e : t.entradas) {
+            out.u32(e.id);
+            out.u32(offs[idxEntrada]);
+            out.u32(e.datos->size());
+            ++idxEntrada;
+        }
+    }
+    if (out.pos() != offDatos) {
+        throw ErrorDatos{"generador: layout DRS realista inconsistente (" +
+                         std::to_string(out.pos()) + " != " + std::to_string(offDatos) + ")"};
+    }
+    for (const TablaGen& t : tablas) {
+        for (const EntradaGen& e : t.entradas) out.crudo(*e.datos);
+    }
+    if (!guardar(dir + "/interfac_estilo.drs", out.b)) return -1;
+    return 1;
+}
+
+// ------------------------------------------------------------------
+// Extra: dat VALIDO de decenas de MB (payload + cola de ceros, bloques
+// almacenados). Descarta los limites de memoria como causa de fallo
+// con los reales de 16-25 MB.
+// ------------------------------------------------------------------
+int generarGrande(const std::string& dir, unsigned mb) {
+    std::vector<uint8_t> payload = construirDatPayload();
+    payload.reserve(payload.size() + static_cast<std::size_t>(mb) * 1024 * 1024 + 16);
+    payload.insert(payload.end(), static_cast<std::size_t>(mb) * 1024 * 1024, 0x00);
+    const std::vector<uint8_t> dat = desinflarAlmacenado(payload.data(), payload.size());
+    if (!guardar(dir + "/grande.dat", dat)) return -1;
+    return 1;
+}
+
 } // namespace assets

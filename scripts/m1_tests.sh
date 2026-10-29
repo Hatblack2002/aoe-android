@@ -155,6 +155,58 @@ else
   fallo "dumpslp jugador 5"; cat "$BUILD/m1_dumpslp_p5.txt"
 fi
 
+paso "9. Descarta (b): nombres con mayusculas no afectan al chequeo"
+# El telefono importa 'Empires.dat', 'Interfac.drs', 'Terrain.drs' (ext4
+# distingue mayusculas). El validador ENUMERA el directorio y lower-casea la
+# extension, asi que el caso del nombre no puede causar los 4 FALLIDOS.
+MAY="$DIR/mayusculas"
+mkdir -p "$MAY"
+cp "$DIR/empires_test.dat" "$MAY/Empires.dat"
+cp "$DIR/prueba.drs" "$MAY/Graphics.drs"
+cp "$DIR/prueba.drs" "$MAY/Interfac.drs"
+cp "$DIR/prueba.drs" "$MAY/Terrain.drs"
+cp "$DIR/prueba.pal" "$MAY/PALETA.PAL"
+if "$ASSETCHECK" "$MAY/Empires.dat" "$MAY/Graphics.drs" "$MAY/Interfac.drs" \
+     "$MAY/Terrain.drs" "$MAY/PALETA.PAL" > "$BUILD/m1_mayusculas.txt" 2>&1; then
+  ok "5 archivos con mayusculas validan igual"
+else
+  fallo "nombres con mayusculas"; cat "$BUILD/m1_mayusculas.txt"
+fi
+grep -q "ASSETCHECK: 5 OK, 0 FALLIDOS" "$BUILD/m1_mayusculas.txt" \
+  && ok "conteo exacto: 5 OK, 0 FALLIDOS" || fallo "conteo con mayusculas"
+
+paso "10. Descarta (c): archivo de 26 MB carga, se infla y valida"
+"$GENDATA" "$DIR" --grande > /dev/null
+if test -s "$DIR/grande.dat"; then
+  ok "grande.dat generado ($(du -h "$DIR/grande.dat" | cut -f1))"
+else
+  fallo "grande.dat no creado"
+fi
+if "$ASSETCHECK" "$DIR/grande.dat" > "$BUILD/m1_grande.txt" 2>&1; then
+  ok "dat de ~26 MB: carga + DEFLATE + parseo + validacion sin fallos"
+else
+  fallo "archivo de 26 MB"; cat "$BUILD/m1_grande.txt"
+fi
+
+paso "11. DRS realista multitabla (forma de interfac.drs) + ruta DRS::id"
+"$GENDATA" "$DIR" --drs-realista > /dev/null
+test -s "$DIR/interfac_estilo.drs" && ok "interfac_estilo.drs creado" \
+  || fallo "interfac_estilo.drs no creado"
+if "$ASSETCHECK" "$DIR/interfac_estilo.drs" > "$BUILD/m1_realista.txt" 2>&1; then
+  ok "DRS realista (copyright 1997, 3 tablas, 5 recursos) valida"
+else
+  fallo "DRS realista"; cat "$BUILD/m1_realista.txt"
+fi
+grep -q "tablas=3" "$BUILD/m1_realista.txt" && ok "3 tablas detectadas" \
+  || fallo "tablas del realista"
+if "$DUMPSLP" "$DIR/interfac_estilo.drs::101.slp" 0 \
+     "$DIR/interfac_estilo.drs::50500.bina" "$DIR/marco_drs.png" --player 1 \
+     > "$BUILD/m1_dumpslp_drs.txt" 2>&1; then
+  ok "dumpslp extrae SLP y paleta del DRS (ruta drs::id, el camino de la app)"
+else
+  fallo "dumpslp DRS::id"; cat "$BUILD/m1_dumpslp_drs.txt"
+fi
+
 printf '\n==============================\n'
 if [ "$FALLAS" -eq 0 ]; then
   printf 'M1 PRUEBAS: TODAS OK\n'
