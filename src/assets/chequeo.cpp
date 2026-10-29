@@ -170,8 +170,10 @@ std::string inspeccionarCabecera(TipoArchivo tipo, const std::vector<uint8_t>& b
             break;
         }
         case TipoArchivo::Dat: {
-            // El dat esperado es DEFLATE crudo: el primer byte codifica el
-            // tipo de bloque (bits 1-2). Lo mostramos para diagnosticar.
+            // El dat esperado es DEFLATE crudo (openage: decompress(data,-15)):
+            // el primer byte codifica el tipo de bloque (bits 1-2). Lo
+            // mostramos para diagnosticar, con pistas de las otras dos
+            // interpretaciones posibles (sin comprimir / zlib con cabecera).
             if (b.size() < 1) break;
             const int btype = (b[0] >> 1) & 0x03;
             const char* nombres[4] = {"almacenado", "fijo", "dinamico", "INVALIDO(3)"};
@@ -179,6 +181,20 @@ std::string inspeccionarCabecera(TipoArchivo tipo, const std::vector<uint8_t>& b
                      "si fuera DEFLATE crudo: primer byte 0x%02X -> bloque %s",
                      b[0], nombres[btype]);
             s += linea;
+            if (b.size() >= 12) {
+                snprintf(linea, sizeof(linea),
+                         "\nsi fuera dat sin comprimir: versionstr '%s' rest=%u ter=%u",
+                         asciiLegible(b.data(), 8).c_str(), leerU16(b.data() + 8),
+                         leerU16(b.data() + 10));
+                s += linea;
+            }
+            if (b[0] == 0x78 &&
+                (static_cast<unsigned>(b[0]) * 256u + b[1]) % 31u == 0u) {
+                s += "\n";
+                snprintf(linea, sizeof(linea),
+                         "primer byte 0x78 con FCHECK valido: posible zlib con cabecera");
+                s += linea;
+            }
             break;
         }
         case TipoArchivo::Paleta: {
@@ -223,7 +239,13 @@ std::string chequearDatos(TipoArchivo tipo, const std::vector<uint8_t>& bytes,
             LectorDRS drs(bytes.data(), bytes.size(), nombreVisible);
             snprintf(linea, sizeof(linea),
                      "DRS OK: version %s, tipo %s, tablas=%zu, recursos=%zu",
-                     drs.info().version.c_str(), drs.info().tipo.c_str(),
+                     drs.info().version.c_str(),
+                     // tipo mostrado saneado (por si el relleno trae bytes no
+                     // imprimibles; no afecta a la aceptacion, solo al texto)
+                     asciiLegible(
+                         reinterpret_cast<const uint8_t*>(drs.info().tipo.data()),
+                         drs.info().tipo.size())
+                         .c_str(),
                      drs.info().tablas.size(), drs.info().archivos.size());
             informe = std::string(linea) + "\n";
             for (const InfoTablaDRS& t : drs.info().tablas) {
@@ -242,12 +264,61 @@ std::string chequearDatos(TipoArchivo tipo, const std::vector<uint8_t>& bytes,
             return std::string(linea) + "\n";
         }
         case TipoArchivo::Dat: {
-            const std::vector<uint8_t> datos =
-                inflar(bytes.data(), bytes.size(), 64u * 1024 * 1024);
+            // Contenedor esperado: DEFLATE crudo (openage: decompress(-15)).
+            // Si no lo es, se prueban SOLO variantes verificables (checksum o
+            // parseo coherente) y el informe dice cual aplico: nunca se
+            // acepta una interpretacion sin verificacion (spec §2).
+            std::vector<uint8_t> datos;
+            std::string via;
+            try {
+                datos = inflar(bytes.data(), bytes.size(), 64u * 1024 * 1024);
+                via = "DEFLATE crudo";
+            } catch (const ErrorDatos& eDefl) {
+                const std::string causaDeflate = eDefl.mensaje;
+                // Variante verificable 1: zlib con cabecera (0x78 + FCHECK),
+                // cuerpo inflado + adler32 del trailer comprobado.
+                if (bytes.size() >= 8 && bytes[0] == 0x78 &&
+                    (static_cast<unsigned>(bytes[0]) * 256u + bytes[1]) % 31u == 0u) {
+                    try {
+                        std::size_t consumidos = 0;
+                        std::vector<uint8_t> cuerpo =
+                            inflar(bytes.data() + 2, bytes.size() - 2,
+                                   64u * 1024 * 1024, &consumidos);
+                        const std::size_t finCuerpo = 2 + consumidos;
+                        if (finCuerpo + 4 <= bytes.size() &&
+                            leerU32(bytes.data() + finCuerpo) ==
+                                adler32(cuerpo.data(), cuerpo.size())) {
+                            datos = std::move(cuerpo);
+                            via = "zlib con cabecera (adler32 verificado)";
+                        }
+                    } catch (const ErrorDatos&) {
+                        // la pista zlib no sirvio; seguimos con la siguiente
+                    }
+                }
+                // Variante verificable 2: dat SIN comprimir (versionstr ASCII
+                // "D.D" en offset 0). Solo se acepta si parsea con conteos
+                // sanos; si falla, se encadena la causa exacta con offset.
+                if (datos.empty() && bytes.size() >= 12 && isdigit(bytes[0]) != 0 &&
+                    bytes[1] == '.' && isdigit(bytes[2]) != 0) {
+                    try {
+                        leerDat(bytes.data(), bytes.size(), nombreVisible);
+                        datos.assign(bytes.begin(), bytes.end());
+                        via = "sin comprimir (versionstr ASCII)";
+                    } catch (const ErrorDatos& eCrudo) {
+                        throw ErrorDatos{"no es DEFLATE crudo (" + causaDeflate +
+                                         ") y como dat sin comprimir fallo: " +
+                                         eCrudo.mensaje};
+                    }
+                }
+                if (datos.empty()) {
+                    throw ErrorDatos{"no es DEFLATE crudo: " + causaDeflate};
+                }
+            }
             const ResumenDat dat = leerDat(datos.data(), datos.size(), nombreVisible);
             snprintf(linea, sizeof(linea),
-                     "DAT OK: versionstr \"%s\"; comprimido=%zu B; descomprimido=%zu B",
-                     dat.versionStr.c_str(), bytes.size(), datos.size());
+                     "DAT OK: versionstr \"%s\"; contenedor: %s; comprimido=%zu B; "
+                     "descomprimido=%zu B",
+                     dat.versionStr.c_str(), via.c_str(), bytes.size(), datos.size());
             informe = std::string(linea) + "\n";
             snprintf(linea, sizeof(linea),
                      "  mapa=%dx%d mundo=%dx%d tile=%dx%d (mitad %dx%d, elev %d)\n",

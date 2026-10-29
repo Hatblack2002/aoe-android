@@ -697,8 +697,32 @@ int generarDatosPrueba(const std::string& dir) {
     ++escritos;
 
     std::vector<uint8_t> malo = drs;
-    malo[0] = 0x01;  // copyright con byte no imprimible
+    // La magia estructural del DRS es la version "1.00" en el offset 40
+    // (el copyright es informativo y puede llevar relleno no imprimible).
+    malo[40] = '9';
+    malo[41] = '.';
+    malo[42] = '9';
+    malo[43] = '9';
     if (!guardar(ruta("drs_badmagic.drs"), malo)) {
+        return -1;
+    }
+    ++escritos;
+
+    // Positivo: relleno de cabecera NO imprimible tolerado (es lo que llevan
+    // los DRS reales de AoE1: 0x1A tras el copyright, basura en el relleno).
+    // Si esto fallase, habriamos vuelto a validar por caracteres.
+    malo = drs;
+    // El copyright sintetico es "AoE Mobile M1 datos sinteticos" (30) + nulos.
+    // El 0x1A va ANTES del primer nulo (como en el original: tras 37 chars y
+    // antes del relleno), para que el campo leido contenga el byte de control.
+    malo[30] = 0x1A;
+    malo[31] = 0x02;
+    malo[32] = 0x03;
+    malo[33] = 0x04;
+    malo[49] = 0xFF;  // relleno del ftype con basura (sin nulos antes)
+    malo[50] = 0xFE;
+    malo[51] = 0xFD;
+    if (!guardar(ruta("drs_padding.drs"), malo)) {
         return -1;
     }
     ++escritos;
@@ -760,6 +784,7 @@ int generarDatosPrueba(const std::string& dir) {
     man += "dat: terrenos_habilitados=8; colores_jugador=9; sonidos=1; graficos=2\n";
     man += "corruptos: trunc50.drs trunc60.slp trunc40.dat trunc30.pal drs_badmagic.drs\n";
     man += "           slp_badcmd.slp slp_badrow.slp dat_badptr.dat pal_badheader.pal\n";
+    man += "positivo extra: drs_padding.drs (relleno de cabecera con 0x1A/0xFF, valida)\n";
     guardarTexto(ruta("MANIFIESTO.txt"), man);
     ++escritos;
     return escritos;
@@ -800,7 +825,17 @@ int generarDrsRealista(const std::string& dir) {
     const std::size_t offDatos = offInfos + numEntradas * 12;
 
     Escritor out;
-    out.fijas("Copyright (c) 1997 Ensemble Studios.", 40);
+    // Cabecera BYTE-EXACTA al original de 1997 (hexdump de artho.com/age/drs.html):
+    // copyright + byte de control 0x1A + nulos; ftype "tribe" + nulos.
+    // Un DRS asi es un DRS valido: si el lector lo rechaza por caracteres,
+    // este fixture lo detecta (caso real: graphics.drs con 683 slp).
+    {
+        const char* cpr = "Copyright (c) 1997 Ensemble Studios.";  // 37 bytes
+        for (int i = 0; i < 37; ++i) out.u8(static_cast<unsigned char>(cpr[i]));
+        out.u8(0x1A);
+        out.u8(0x00);
+        out.u8(0x00);
+    }
     out.fijas("1.00", 4);
     out.fijas("tribe", 12);
     out.i32(static_cast<long>(tablas.size()));

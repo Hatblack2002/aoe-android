@@ -5,7 +5,7 @@ Actualizado: 29 de octubre de 2026. Cada hito lista sus criterios de la especifi
 | Hito | Estado |
 | --- | --- |
 | M0 Esqueleto | COMPLETO (CI verde + APK instalado + registro y verificacion del usuario) |
-| M1 Lectura de datos | **PENDIENTE**: con sinteticos todo pasa (CI), pero los 4 archivos reales del usuario FALLAN el chequeo (13 OK / 4 FALLIDOS en el telefono, 28 oct). La pantalla ocultaba las causas (recorte a 58 chars); corregido en 0.3.1 para ver archivo+causa+offset+hex. Diagnostico en §M1 abajo |
+| M1 Lectura de datos | **PENDIENTE**: causa raiz de los 4 FALLIDOS CONFIRMADA y corregida en 0.3.2 — la validacion exigia bytes imprimibles donde el DRS real de 1997 lleva relleno de control (0x1A tras el copyright; hipotesis del usuario, verificada con el hexdump de artho.com y el codigo de openage). Pruebas de escritorio 12/12 en verde. Falta la verificacion del usuario con sus archivos reales para cerrar (§M1 abajo) |
 | M2 Mapa visible | CI verde con datos sinteticos (run 40778921591: mapa 64x64, tile del dat, camara, anti-pantalla-negra + APK 993 KB); el tile con el DAT REAL del usuario sigue PENDIENTE (su empires.dat no pasa aun el chequeo; el mapa usa sintetico/documentado) |
 | M3 Objetos y centro urbano | no iniciado |
 | M4 Unidades que se mueven | no iniciado |
@@ -84,6 +84,23 @@ Causa visible: NINGUNA en el telefono, porque la pantalla recortaba cada linea a
 3. **(c) Limites de memoria con 16-25 MB** — DESCARTADA como causa de los 4 ERROR: un fallo de memoria mataria el proceso (bad_alloc sin capturar), y en cambio los 4 archivos produjeron lineas `ERROR:` (ErrorDatos de validacion, lanzadas DESPUES de leer el archivo completo). Ademas, los 13 chequeos sinteticos corrieron en el mismo proceso. Prueba automatica nueva (paso 10): un dat de ~26 MB (mayor que Interfac.drs) se carga, se infla y valida sin fallos.
 
 La causa exacta de cada archivo estara en el informe de la 0.3.1: cada ERROR muestra tipo detectado, tamano exacto, causa completa con offset, desglose defensivo de la cabecera (version/tipo/tablas del DRS; tipo de bloque DEFLATE del dat) y los primeros 16 bytes en hex (spec §2, principio 2: herramienta que inspecciona y reporta lo que el archivo realmente contiene).
+
+### Causa raiz confirmada (29 oct 2026): validacion por caracteres donde el formato real trae relleno de control
+
+El usuario reporto el dato decisivo con la 0.3.1: graphics.drs se rechaza con "cabecera no parece un DRS" PERO la cabecera se lee bien (version 1.00, tipo tribe, tabla slp con 683 archivos). Su hipotesis — "la validacion exige bytes imprimibles donde hay relleno nulo" — se CONFIRMO con dos fuentes independientes:
+
+1. El hexdump de la referencia original de 1997 (artho.com/age/drs.html): el campo copyright real es "Copyright (c) 1997 Ensemble Studios." seguido del byte de control **0x1A** (marca EOF de DOS) y luego nulos. El 0x1A no es nulo ni imprimible: el chequeo `imprimible()` lo rechazaba y por eso el DRS valido caia con "cabecera no parece un DRS".
+2. El codigo de openage (drs.py, soporta AoE1): el layout que portabamos es CORRECTO (copyright[40], version "1.00" @40, ftype[12] @44, tablas 12 B, entradas 12 B) y openage no valida imprimibilidad en ningun campo; su comprobacion de familia es un prefijo del copyright, no un rango de caracteres.
+
+Correccion 0.3.2 — validar por ESTRUCTURA, no por caracteres (peticion explicita del usuario):
+
+1. `src/assets/drs.cpp`: eliminado el chequeo de imprimibilidad de copyright/tipo. La validacion queda estructural: version magica "1.00" en el offset 40 (con bytes crudos en hex si falla), conteo de tablas plausible (1..32), cada tabla y cada entrada dentro del archivo. copyright y tipo se registran como informacion sin condicionar la aceptacion.
+2. Extension de tabla tolerante a relleno con nulos ademas de espacios ('slp' + 0x00 tambien resuelve a slp).
+3. Fixtures que codifican la leccion (para que el bug no vuelva): `interfac_estilo.drs` lleva ahora la cabecera BYTE-EXACTA del original de 1997 (0x1A incluido) y DEBE validar; `drs_padding.drs` nuevo (0x1A/0x02.. en copyright, 0xFF.. en relleno de ftype) DEBE validar; `drs_badmagic.drs` ahora corrompe la version (la magia estructural) y DEBE fallar con el hex del campo. Pasos 11-12 ampliados en `m1_tests.sh`.
+4. Diagnostico del dat reforzado para el informe de Empires.dat: si el DEFLATE crudo falla, se prueban SOLO variantes verificables — zlib con cabecera (adler32 comprobado) o dat sin comprimir (versionstr ASCII "D.D" + parseo coherente) — y el informe dice cual aplico con su evidencia; si ninguna, se encadena la causa exacta del DEFLATE. La inspeccion defensiva muestra versionstr ASCII candidata, conteos rest/ter y la pista de firma zlib.
+5. La paleta NO cambio: openage exige JASC-PAL de texto para la familia ROR/AoE1 (colortable.py); si la paleta real fallara, el informe lo dira con evidencia (no se adivina).
+
+Estado: escritorio 12/12 TODAS OK + selftest + M2 en verde. Falta la evidencia del telefono (spec §2: los sinteticos no cierran un hito): los 3 DRS reales deben validar y DUMP SLP debe mostrar **ORIGEN: REAL**; Empires.dat validara o el informe mostrara la causa exacta con offset para el siguiente ajuste.
 
 ### Correcciones 0.3.1 (diagnostico con archivos reales)
 

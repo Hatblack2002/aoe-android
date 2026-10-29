@@ -25,8 +25,8 @@ test -s "$DIR/prueba.drs" && test -s "$DIR/prueba.slp" && test -s "$DIR/prueba.p
 
 paso "2. assetcheck sobre archivos validos (debe pasar)"
 if "$ASSETCHECK" "$DIR/prueba.drs" "$DIR/prueba.slp" "$DIR/prueba.pal" \
-     "$DIR/empires_test.dat" > "$BUILD/m1_assetcheck_ok.txt" 2>&1; then
-  ok "assetcheck 4 archivos OK"
+     "$DIR/empires_test.dat" "$DIR/drs_padding.drs" > "$BUILD/m1_assetcheck_ok.txt" 2>&1; then
+  ok "assetcheck 5 archivos OK (incluye drs_padding con relleno no imprimible)"
 else
   fallo "assetcheck valido"; cat "$BUILD/m1_assetcheck_ok.txt"
 fi
@@ -199,12 +199,29 @@ else
 fi
 grep -q "tablas=3" "$BUILD/m1_realista.txt" && ok "3 tablas detectadas" \
   || fallo "tablas del realista"
+grep -q "tipo tribe" "$BUILD/m1_realista.txt" && ok "cabecera byte-exacta 1997 leida (0x1A + nulos en copyright)" \
+  || fallo "tipo del realista (¿validacion por caracteres?)"
 if "$DUMPSLP" "$DIR/interfac_estilo.drs::101.slp" 0 \
      "$DIR/interfac_estilo.drs::50500.bina" "$DIR/marco_drs.png" --player 1 \
      > "$BUILD/m1_dumpslp_drs.txt" 2>&1; then
   ok "dumpslp extrae SLP y paleta del DRS (ruta drs::id, el camino de la app)"
 else
   fallo "dumpslp DRS::id"; cat "$BUILD/m1_dumpslp_drs.txt"
+fi
+
+paso "12. Relleno de cabecera no imprimible se TOLERA (bytes del real de 1997)"
+# El DRS real lleva 0x1A tras el copyright y relleno arbitrario en ftype;
+# la validacion es estructural (version + tablas), no de caracteres.
+if "$ASSETCHECK" "$DIR/drs_padding.drs" > "$BUILD/m1_padding.txt" 2>&1; then
+  ok "drs_padding.drs (0x1A/0x02.. en copyright, 0xFF.. en ftype) valida"
+else
+  fallo "relleno no imprimible rechazado (¿validacion por caracteres?)"
+  cat "$BUILD/m1_padding.txt"
+fi
+if "$ASSETCHECK" --expect-fail "$DIR/drs_badmagic.drs" > "$BUILD/m1_badmagic.txt" 2>&1; then
+  ok "drs_badmagic (version corrupta) sigue fallando con mensaje"
+else
+  fallo "drs_badmagic aceptado (¡la magia version no se valida!)"; cat "$BUILD/m1_badmagic.txt"
 fi
 
 printf '\n==============================\n'

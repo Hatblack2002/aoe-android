@@ -8,21 +8,18 @@ namespace assets {
 
 namespace {
 
-// Invierte los 4 bytes de la extension y recorta espacios: 'anib' -> "bina",
-// ' pls' -> "slp". Ver openage drs.py: fileext[::-1].rstrip().lower().
+// Invierte los 4 bytes de la extension y recorta espacios/nulos: 'anib' ->
+// "bina", ' pls' -> "slp". Ver openage drs.py: fileext[::-1].rstrip().lower().
+// Se recortan tambien nulos por si un editor relleno con 0x00 ('slp' + 0x00
+// invertido deja el nulo al final tras dar la vuelta).
 std::string extensionLogica(const std::string& cruda) {
     std::string inv(cruda.rbegin(), cruda.rend());
-    while (!inv.empty() && isspace(static_cast<unsigned char>(inv.back()))) inv.pop_back();
+    while (!inv.empty() &&
+           (inv.back() == ' ' || inv.back() == '\0')) {
+        inv.pop_back();
+    }
     for (char& c : inv) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
     return inv;
-}
-
-bool imprimible(const std::string& s) {
-    for (char c : s) {
-        const unsigned char u = static_cast<unsigned char>(c);
-        if (u != 0 && (u < 0x20 || u > 0x7E)) return false;
-    }
-    return true;
 }
 
 } // namespace
@@ -40,24 +37,15 @@ LectorDRS::LectorDRS(const uint8_t* datos, unsigned long tam, std::string nombre
     const int32_t numTablas = r.i32("DRS table_count");
     r.i32("DRS file_offset (primer archivo)");
 
-    if (!imprimible(info_.copyright) || !imprimible(info_.tipo)) {
-        // Evidencia para diagnosticar: bytes crudos de copyright y tipo.
-        char hex[16 * 4 + 4];
-        for (int i = 0; i < 16; ++i) {
-            snprintf(hex + i * 3, 4, "%02X ", datos_[i]);
-        }
-        hex[16 * 3 - 1] = '\0';
-        char hexTipo[4 * 4];
-        for (int i = 0; i < 4; ++i) {
-            snprintf(hexTipo + i * 3, 4, "%02X ",
-                     datos_[44 + i < tam_ ? 44 + i : 0]);
-        }
-        hexTipo[4 * 3 - 1] = '\0';
-        throw ErrorDatos{archivo_ +
-                         ": la cabecera no parece un DRS (copyright/tipo con bytes "
-                         "no imprimibles). ¿Es este archivo un DRS? copyright[0..15]=" +
-                         std::string(hex) + " ftype=" + std::string(hexTipo)};
-    }
+    // Validacion ESTRUCTURAL, no de caracteres (spec M1). Los archivos reales
+    // de AoE1 llevan relleno NO imprimible en la cabecera: el hexdump de
+    // artho.com/age/drs.html muestra "Copyright (c) 1997 Ensemble Studios."
+    // seguido del byte de control 0x1A y nulos, y ftype es "tribe" relleno
+    // con nulos hasta 12. Exigir imprimibilidad ahi rechazaba DRS validos
+    // (caso graphics.drs real: version 1.00, tipo tribe, tabla slp con 683
+    // archivos). Lo estructural es: version magica "1.00", conteo de tablas
+    // plausible y tablas/entradas dentro del archivo; copyright y tipo se
+    // registran como informacion sin condicionar la aceptacion.
     if (info_.version != "1.00") {
         char hexV[16];
         for (int i = 0; i < 4 && 40 + i < tam_; ++i) {
