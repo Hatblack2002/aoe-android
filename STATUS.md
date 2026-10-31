@@ -1,6 +1,6 @@
 # STATUS - AoE Mobile
 
-Actualizado: 29 de octubre de 2026. Cada hito lista sus criterios de la especificacion §6 con estado y evidencia. Regla: un hito solo se cierra con TODOS sus criterios cumplidos y evidencia adjunta (spec §2, principio 1).
+Actualizado: 31 de octubre de 2026 (CI 0.3.3 en verde, APK publicado). Cada hito lista sus criterios de la especificacion §6 con estado y evidencia. Regla: un hito solo se cierra con TODOS sus criterios cumplidos y evidencia adjunta (spec §2, principio 1).
 
 | Hito | Estado |
 | --- | --- |
@@ -111,6 +111,12 @@ Lo que falta para cerrar M1 (sin adivinar, spec §2): una sola pasada del usuari
 - `aoe --selftest`: **exit 0** con `DECODIFICADOR SLP OK: 7 filas pixel a pixel (280x7)...4 casos negativos fallan con la causa correcta`.
 - `scripts/m1_tests.sh`: **TODAS OK** (12 grupos: DRS estructural, DRS realista 1997 byte-exacto, relleno no imprimible tolerado, dat 26 MB, rutas DRS::id).
 - `scripts/m2_tests.sh`: **TODAS OK** (mapa 960x540, PNG valido, determinismo byte a byte, anti-pantalla-negra, dat corrupto rechazado con causa).
+
+### CI 0.3.3 en verde (31 oct 2026): APK nuevo publicado
+
+- Run: https://github.com/Hatblack2002/aoe-android/actions/runs/41236979103 — autoprueba de escritorio + M1 (TODAS OK) + M2 (TODAS OK) + compilacion Android.
+- Artefacto `aoe-mobile-M2-debug-apk` (1.045 KB, commit 75bc46a). Verificado por el agente ANTES de reportar: `strings libmain.so` contiene **"AoE Mobile 0.3.3 (M1+M2)"** — el telefono debe mostrar exactamente esa cadena; si muestra 0.3.2 o anterior, el APK instalado es el viejo.
+- Version en pantalla = mecanismo anti-APK-viejo: cada informe del usuario debe citar la version que ve en pantalla.
 
 ### Causa raiz confirmada (29 oct 2026): validacion por caracteres donde el formato real trae relleno de control
 
